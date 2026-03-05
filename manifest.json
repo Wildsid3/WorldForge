@@ -1,0 +1,13 @@
+{
+  "name": "WorldForge",
+  "short_name": "WorldForge",
+  "description": "Worldbuilding AI Notebook",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f0f",
+  "theme_color": "#c8a24e",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
