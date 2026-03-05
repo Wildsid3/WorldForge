@@ -2,30 +2,28 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#0f0f0f">
-<title>WorldForge</title>
+<title>WorldForge Desktop</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon.svg">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <style>
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+*{box-sizing:border-box;margin:0;padding:0}
 html,body,#root{height:100%;width:100%;overflow:hidden}
-body{background:#0f0f0f;color:#e8e4dc;font-family:'Source Sans 3',sans-serif;-webkit-font-smoothing:antialiased}
-::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#2a2a32;border-radius:2px}
+body{background:#0a0a0c;color:#e8e4dc;font-family:'Source Sans 3',sans-serif;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#111}::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#555}
 input,textarea,button{font-family:inherit}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script>
-// === IndexedDB ===
+// === IndexedDB (identical to mobile) ===
 const IDB={
   _db:null,
   open(){return new Promise((res,rej)=>{if(this._db)return res(this._db);const r=indexedDB.open('worldforge',2);r.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains('kv'))d.createObjectStore('kv');};r.onsuccess=e=>{this._db=e.target.result;res(this._db);};r.onerror=e=>rej(e);});},
@@ -36,7 +34,6 @@ const IDB={
   async clear(){const d=await this.open();return new Promise((res,rej)=>{const t=d.transaction('kv','readwrite').objectStore('kv').clear();t.onsuccess=()=>res(true);t.onerror=e=>rej(e);});}
 };
 
-// === Config ===
 window.ASPECTS=[
   {id:"characters",name:"Characters",icon:"\u{1f464}",topicType:"character",topicPrompt:"List every character name mentioned"},
   {id:"cultures",name:"Cultures",icon:"\u{1f3db}\ufe0f",topicType:"entity",topicPrompt:"List every culture or civilization mentioned"},
@@ -64,10 +61,10 @@ window.ASPECTS=[
 ];
 window.MAX_WORLDS=10;
 
-// === Data Layer ===
+// === Data Layer (identical to mobile) ===
 window.db={
   async listWorlds(){const ks=await IDB.list("world:");const ws=[];for(const k of ks){const w=await IDB.get(k);if(w)ws.push(w);}ws.sort((a,b)=>(a.created||"").localeCompare(b.created||""));return ws;},
-  async createWorld(n){const id=n.toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,40)+'-'+Math.random().toString(36).slice(2,8);const m={id,name:n,created:new Date().toISOString(),updated:new Date().toISOString(),chatCount:0};await IDB.set("world:"+id,m);await IDB.set("bible:"+id,{world_id:id,world_name:n,last_updated:new Date().toISOString(),facts:{}});return m;},
+  async createWorld(n,desc){const id=n.toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,40)+'-'+Math.random().toString(36).slice(2,8);const m={id,name:n,description:desc||"",created:new Date().toISOString(),updated:new Date().toISOString(),chatCount:0};await IDB.set("world:"+id,m);await IDB.set("bible:"+id,{world_id:id,world_name:n,last_updated:new Date().toISOString(),facts:{}});return m;},
   async saveWorld(w){w.updated=new Date().toISOString();return IDB.set("world:"+w.id,w);},
   async deleteWorld(wid){await IDB.del("world:"+wid);await IDB.del("bible:"+wid);const ck=await IDB.list("chat:"+wid+":");for(const k of ck)await IDB.del(k);},
   async getBible(wid){return(await IDB.get("bible:"+wid))||{facts:{}};},
@@ -81,6 +78,15 @@ window.db={
   async createGeneralChat(t){return this.createChat("__general__","__general__",t);},
   async fileNote(wid,aid,text){const chats=await this.listChats(wid,aid);let tgt=chats.find(c=>c.title==="Cross-World Notes");if(tgt)tgt=await this.loadChat(wid,aid,tgt.id);if(!tgt)tgt=await this.createChat(wid,aid,"Cross-World Notes");tgt.messages.push({role:"user",content:text,timestamp:new Date().toISOString(),source:"cross-world"});await this.saveChat(tgt);},
   async gatherAspectText(wid,aid){const chats=await this.listChats(wid,aid);const ts=[];for(const ch of chats){const f=await this.loadChat(wid,aid,ch.id);if(f)for(const m of f.messages||[])ts.push(m.content||"");}return ts.join("\n\n");},
+  async getWorldSummary(wid){
+    const b=await this.getBible(wid);const facts=b.facts||{};
+    const parts=[];
+    for(const[cat,entries] of Object.entries(facts)){
+      const keys=Object.keys(entries).slice(0,3);
+      if(keys.length)parts.push(cat.replace(/-/g,' ')+": "+keys.join(", "));
+    }
+    return parts.slice(0,4).join(". ")||"New world — start building!";
+  },
   async exportAll(){const data={version:"worldforge-v2",exported:new Date().toISOString(),worlds:[],bibles:[],chats:[],generalChats:[]};const ws=await this.listWorlds();for(const w of ws){data.worlds.push(w);data.bibles.push({wid:w.id,...(await this.getBible(w.id))});for(const asp of ASPECTS){const cs=await this.listChats(w.id,asp.id);for(const ch of cs){const f=await this.loadChat(w.id,asp.id,ch.id);if(f)data.chats.push(f);}}const wgc=await this.listChats(w.id,"__worldchat__");for(const ch of wgc){const f=await this.loadChat(w.id,"__worldchat__",ch.id);if(f)data.chats.push(f);}}const gc=await this.listGeneralChats();for(const ch of gc){const f=await this.loadChat("__general__","__general__",ch.id);if(f)data.generalChats.push(f);}return data;},
   async importAll(data){let ct={worlds:0,chats:0};for(const w of data.worlds||[]){await IDB.set("world:"+w.id,w);ct.worlds++;}for(const b of data.bibles||[]){const wid=b.wid||b.world_id;if(wid)await IDB.set("bible:"+wid,b);}for(const c of data.chats||[]){await IDB.set("chat:"+c.world_id+":"+c.aspect_id+":"+c.id,c);ct.chats++;}for(const c of data.generalChats||[]){await IDB.set("chat:__general__:__general__:"+c.id,c);ct.chats++;}return ct;},
   async getApiKey(){return IDB.get("_apikey");},
@@ -90,12 +96,11 @@ window.db={
 // === AI ===
 window.aiCall=async function(system,messages,maxTokens){
   maxTokens=maxTokens||1500;const key=await db.getApiKey();
-  if(!key)return"[No API key set. Go to Settings to add your Anthropic API key.]";
+  if(!key)return"[No API key. Go to Settings to add your Anthropic API key.]";
   try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,system,messages:messages.map(m=>({role:m.role,content:m.content}))})});
   if(!r.ok){const e=await r.json().catch(()=>({}));return"API error "+r.status+": "+(e.error?.message||r.statusText);}
   const data=await r.json();return data.content?.map(b=>b.text||"").join("")||"No response.";}catch(e){return"Network error: "+e.message;}
 };
-
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
 </script>
 
@@ -103,69 +108,50 @@ if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch
 const {useState,useEffect,useCallback,useRef}=React;
 const ASPECTS=window.ASPECTS,MAX_WORLDS=window.MAX_WORLDS,db=window.db,aiCall=window.aiCall;
 
-const T={bg:"#0f0f0f",sf:"#1a1a1e",sfH:"#222228",card:"#1e1e24",bd:"#2a2a32",
-  gold:"#c8a24e",goldD:"#8a7030",tx:"#e8e4dc",txD:"#8a8680",txM:"#b8b4ac",red:"#8a3a3a",redTx:"#d46a6a"};
+const T={bg:"#0a0a0c",sf:"#141418",sf2:"#1a1a20",sfH:"#222228",card:"#16161c",
+  bd:"#2a2a32",bdL:"#3a3a44",gold:"#c8a24e",goldD:"#8a7030",goldB:"#e8c25e",
+  tx:"#e8e4dc",txD:"#7a7670",txM:"#b8b4ac",red:"#8a3a3a",redTx:"#d46a6a"};
+
 const iS={width:"100%",padding:"10px 14px",borderRadius:8,border:"1px solid "+T.bd,background:T.bg,color:T.tx,fontSize:14,fontFamily:"inherit",outline:"none"};
 
+// === Shared Components ===
 function Modal({open,title,children,onClose}){
   if(!open)return null;
-  return(<div style={{position:"fixed",inset:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={onClose}>
-    <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.75)"}}/>
-    <div style={{position:"relative",background:T.sf,border:"1px solid "+T.bd,borderRadius:12,padding:20,width:"100%",maxWidth:360}} onClick={e=>e.stopPropagation()}>
-      {title&&<div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:T.gold,marginBottom:16}}>{title}</div>}
+  return(<div style={{position:"fixed",inset:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
+    <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.7)"}}/>
+    <div style={{position:"relative",background:T.sf,border:"1px solid "+T.bd,borderRadius:12,padding:24,width:"100%",maxWidth:420}} onClick={e=>e.stopPropagation()}>
+      {title&&<div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,marginBottom:16}}>{title}</div>}
       {children}</div></div>);
 }
 
-function Hdr({title,subtitle,onBack,right}){
-  return(<div style={{padding:"16px 20px 12px",borderBottom:"1px solid "+T.bd,background:"linear-gradient(180deg,"+T.sf+" 0%,"+T.bg+" 100%)",position:"sticky",top:0,zIndex:10}}>
-    <div style={{display:"flex",alignItems:"center",gap:12}}>
-      {onBack&&<button onClick={onBack} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",padding:"4px 8px 4px 0"}}>{"‹"}</button>}
-      <div style={{flex:1,minWidth:0}}>
-        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:title.length>22?18:24,fontWeight:700,color:T.gold,lineHeight:1.2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{title}</div>
-        {subtitle&&<div style={{fontSize:12,color:T.txD,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subtitle}</div>}
-      </div>{right}</div></div>);
-}
-
-function Row({icon,label,detail,count,onClick,danger}){
-  const[p,sP]=useState(false);
-  return(<button onClick={onClick} onPointerDown={()=>sP(true)} onPointerUp={()=>sP(false)} onPointerLeave={()=>sP(false)}
-    style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 20px",background:p?T.sfH:"none",
-      border:"none",borderBottom:"1px solid "+T.bd+"11",cursor:"pointer",textAlign:"left",color:danger?T.redTx:T.tx,transition:"background .1s"}}>
-    <span style={{fontSize:22,width:32,textAlign:"center",flexShrink:0}}>{icon}</span>
-    <div style={{flex:1,minWidth:0}}>
-      <div style={{fontSize:15,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</div>
-      {detail&&<div style={{fontSize:12,color:T.txD,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{detail}</div>}
-    </div>
-    {count!==undefined&&<span style={{fontSize:12,color:T.txD,background:T.sf,padding:"2px 8px",borderRadius:10,flexShrink:0}}>{count}</span>}
-    <span style={{color:T.txD,fontSize:14,flexShrink:0}}>{"›"}</span>
-  </button>);
-}
-
 function Btn({children,onClick,v="p",full,sm,disabled,style:s}){
-  const m={p:{background:T.gold,color:T.bg,fontWeight:600},s:{background:T.sf,color:T.tx,border:"1px solid "+T.bd},
+  const m={p:{background:T.gold,color:T.bg,fontWeight:600},s:{background:T.sf2,color:T.tx,border:"1px solid "+T.bd},
     g:{background:"none",color:T.gold},d:{background:T.red,color:"#fff"}};
-  return(<button onClick={onClick} disabled={disabled} style={{...m[v],border:m[v].border||"none",padding:sm?"6px 14px":"12px 20px",
-    borderRadius:8,fontSize:sm?13:14,cursor:disabled?"default":"pointer",width:full?"100%":"auto",fontFamily:"inherit",opacity:disabled?0.4:1,...s}}>{children}</button>);
+  return(<button onClick={onClick} disabled={disabled} style={{...m[v],border:m[v].border||"none",padding:sm?"6px 14px":"10px 20px",
+    borderRadius:8,fontSize:sm?13:14,cursor:disabled?"default":"pointer",width:full?"100%":"auto",fontFamily:"inherit",opacity:disabled?0.4:1,transition:"transform .1s",...s}}
+    onMouseDown={e=>{if(!disabled)e.currentTarget.style.transform="scale(0.97)";}}
+    onMouseUp={e=>e.currentTarget.style.transform="scale(1)"}
+    onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}>{children}</button>);
 }
 
 function Bub({msg}){
   const u=msg.role==="user";
-  const filed=msg._filed;
-  return(<div style={{display:"flex",justifyContent:u?"flex-end":"flex-start",padding:"4px 16px"}}>
-    <div style={{maxWidth:"85%",padding:"10px 14px",borderRadius:u?"16px 16px 4px 16px":"16px 16px 16px 4px",
-      background:u?T.gold+"22":T.sf,border:"1px solid "+(u?T.gold+"33":T.bd),
-      fontSize:14,lineHeight:1.55,whiteSpace:"pre-wrap",wordBreak:"break-word",color:T.tx}}>
+  return(<div style={{display:"flex",justifyContent:u?"flex-end":"flex-start",padding:"4px 0",maxWidth:700}}>
+    <div style={{maxWidth:"75%",padding:"10px 16px",borderRadius:u?"14px 14px 4px 14px":"14px 14px 14px 4px",
+      background:u?T.gold+"1a":T.sf2,border:"1px solid "+(u?T.gold+"33":T.bd),
+      fontSize:14,lineHeight:1.6,whiteSpace:"pre-wrap",wordBreak:"break-word",color:T.tx}}>
       {msg.content}
-      {msg.source==="cross-world"&&<div style={{fontSize:11,color:T.goldD,marginTop:6}}>Cross-world note</div>}
-      {filed&&filed.length>0&&<div style={{fontSize:11,color:T.goldD,marginTop:6,borderTop:"1px solid "+T.bd,paddingTop:4}}>
-        {filed.map((f,i)=><div key={i}>{"📁 → "+f}</div>)}</div>}
+      {msg._filed&&msg._filed.length>0&&<div style={{fontSize:11,color:T.goldD,marginTop:6,borderTop:"1px solid "+T.bd,paddingTop:4}}>
+        {msg._filed.map((f,i)=><div key={i}>{"📁 → "+f}</div>)}</div>}
     </div>
   </div>);
 }
 
+// === Main App ===
 function App(){
   const[scr,setScr]=useState("main");
   const[worlds,setWorlds]=useState([]);
+  const[worldDescs,setWorldDescs]=useState({});
   const[cW,setCW]=useState(null);
   const[cA,setCA]=useState(null);
   const[cC,setCC]=useState(null);
@@ -180,116 +166,72 @@ function App(){
   const[impTxt,setImpTxt]=useState("");
   const[mod,setMod]=useState(null);
   const[modIn,setModIn]=useState("");
+  const[modIn2,setModIn2]=useState("");
   const[bibleData,setBibleData]=useState(null);
-  const[apiKey,setApiKey]=useState("");
   const[apiKeyInput,setApiKeyInput]=useState("");
   const[hasKey,setHasKey]=useState(false);
+  const[aspCounts,setAspCounts]=useState({});
   const endRef=useRef(null);
 
   const flash=(m)=>{setToast(m);setTimeout(()=>setToast(""),2500);};
-  const ldW=useCallback(async()=>{setWorlds(await db.listWorlds());},[]);
-  useEffect(()=>{ldW();db.getApiKey().then(k=>{if(k){setApiKey(k);setHasKey(true);}});},[]);
+  const ldW=useCallback(async()=>{
+    const ws=await db.listWorlds();setWorlds(ws);
+    const descs={};for(const w of ws){descs[w.id]=w.description||await db.getWorldSummary(w.id);}setWorldDescs(descs);
+  },[]);
+  useEffect(()=>{ldW();db.getApiKey().then(k=>{if(k)setHasKey(true);});},[]);
   useEffect(()=>{if(scr==="chat")endRef.current?.scrollIntoView({behavior:"smooth"});},[cC?.messages?.length,scr]);
+
+  // Load aspect chat counts when entering a world
+  const loadAspCounts=async(wid)=>{
+    const counts={};
+    for(const a of ASPECTS){const cs=await db.listChats(wid,a.id);counts[a.id]=cs.length;}
+    const wc=await db.listChats(wid,"__worldchat__");counts["__worldchat__"]=wc.length;
+    setAspCounts(counts);
+  };
 
   const goMain=()=>{setScr("main");setCW(null);setCA(null);setCC(null);setGen(false);setWorldChat(false);};
   const goWorlds=async()=>{await ldW();setScr("worlds");};
-  const goWorld=(w)=>{setCW(w);setCA(null);setCC(null);setWorldChat(false);setScr("world");};
+  const goWorld=async(w)=>{setCW(w);setCA(null);setCC(null);setWorldChat(false);await loadAspCounts(w.id);setScr("world");};
   const goAspect=async(a)=>{setCA(a);setCList(await db.listChats(cW.id,a.id));setScr("aspect");};
   const goChat=async(ch,g=false,wc=false)=>{
-    const wid=g?"__general__":cW.id;
-    const aid=g?"__general__":(wc?"__worldchat__":cA.id);
+    const wid=g?"__general__":cW.id;const aid=g?"__general__":(wc?"__worldchat__":cA.id);
     const full=await db.loadChat(wid,aid,ch.id);
     if(full){setCC(full);setGen(g);setWorldChat(wc);setScr("chat");}
   };
   const goGen=async()=>{setCList(await db.listGeneralChats());setGen(true);setWorldChat(false);setCW(null);setCA(null);setScr("general");};
+  const goWorldChat=async()=>{setCList(await db.listChats(cW.id,"__worldchat__"));setWorldChat(true);setGen(false);setScr("worldchatlist");};
 
-  const openNewWorld=()=>{setModIn("");setMod({t:"newWorld"});};
-  const doNewWorld=async()=>{const n=modIn.trim();setMod(null);if(!n)return;if(worlds.length>=MAX_WORLDS){flash("Max "+MAX_WORLDS);return;}const w=await db.createWorld(n);flash("Created: "+n);await ldW();goWorld(w);};
+  const openNewWorld=()=>{setModIn("");setModIn2("");setMod({t:"newWorld"});};
+  const doNewWorld=async()=>{const n=modIn.trim();const d=modIn2.trim();setMod(null);if(!n)return;if(worlds.length>=MAX_WORLDS){flash("Max "+MAX_WORLDS);return;}const w=await db.createWorld(n,d);flash("Created: "+n);await ldW();goWorld(w);};
 
-  // World General Chat - sends to AI with auto-categorize instructions
-  const goWorldChat=async()=>{
-    const chats=await db.listChats(cW.id,"__worldchat__");
-    setCList(chats);setWorldChat(true);setGen(false);setScr("worldchatlist");
-  };
-
+  // Send message
   const send=async()=>{
-    if(!inp.trim()||busy)return;
-    const txt=inp.trim();setInp("");
+    if(!inp.trim()||busy)return;const txt=inp.trim();setInp("");
     const chat={...cC,messages:[...(cC.messages||[]),{role:"user",content:txt,timestamp:new Date().toISOString()}]};
     setCC(chat);setBusy(true);
-    let sys;
-    const aspectIds=ASPECTS.map(a=>a.id).join(", ");
-
+    let sys;const aspectIds=ASPECTS.map(a=>a.id).join(", ");
     if(gen){
-      // Global general chat
       const wl=worlds.map(w=>w.name).join(", ");
       sys="You are WorldForge, a creative worldbuilding assistant in General Chat mode.\nAvailable worlds: "+(wl||"None")+"\nIf the user mentions something for a specific world, after your creative response add on its own line:\n[FILE: WorldName > aspect-id] brief summary\nValid aspect IDs: "+aspectIds+"\nBe warm, creative, collaborative.";
-    } else if(worldChat){
-      // World general chat - discuss anything, auto-categorize
-      const bible=await db.getBible(cW.id);
-      const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"]\n"+Object.entries(e).map(([k,v])=>"  "+k+": "+v).join("\n")).join("\n");
-      sys="You are WorldForge, a creative worldbuilding assistant.\nWorld: \""+cW.name+"\" | Mode: Open Discussion (all aspects)\n\nWORLD BIBLE:\n"+(bt||"(Empty)")+"\n\nThe user is brainstorming freely about this world across any topic - characters, locations, history, magic, politics, etc.\nBe warm, creative, detailed. Connect ideas across aspects.\n\nIMPORTANT: After each response, categorize what was discussed by adding on separate lines:\n[CAT: aspect-id] brief summary of what was discussed\nValid aspect IDs: "+aspectIds+"\nThis helps auto-file discussions to the right aspect. You can add multiple [CAT:] lines if multiple aspects were covered.";
-    } else {
-      // Specific aspect chat
-      const bible=await db.getBible(cW.id);
-      const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"]\n"+Object.entries(e).map(([k,v])=>"  "+k+": "+v).join("\n")).join("\n");
-      sys="You are WorldForge, a creative worldbuilding assistant.\nWorld: \""+cW.name+"\" | Aspect: \""+cA.name+"\"\n\nWORLD BIBLE:\n"+(bt||"(Empty)")+"\n\nBe warm, creative, detailed. Connect ideas across aspects. If new idea contradicts Bible, warn.";
+    }else if(worldChat){
+      const bible=await db.getBible(cW.id);const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"]\n"+Object.entries(e).map(([k,v])=>"  "+k+": "+v).join("\n")).join("\n");
+      sys="You are WorldForge, a creative worldbuilding assistant.\nWorld: \""+cW.name+"\" | Mode: Open Discussion\n\nWORLD BIBLE:\n"+(bt||"(Empty)")+"\n\nThe user is brainstorming freely about this world.\nAfter each response, categorize by adding:\n[CAT: aspect-id] brief summary\nValid aspect IDs: "+aspectIds+"\nBe warm, creative, detailed.";
+    }else{
+      const bible=await db.getBible(cW.id);const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"]\n"+Object.entries(e).map(([k,v])=>"  "+k+": "+v).join("\n")).join("\n");
+      sys="You are WorldForge, a creative worldbuilding assistant.\nWorld: \""+cW.name+"\" | Aspect: \""+cA.name+"\"\n\nWORLD BIBLE:\n"+(bt||"(Empty)")+"\n\nBe warm, creative, detailed.";
     }
-
-    let resp=await aiCall(sys,chat.messages);
-    const filed=[];
-
-    if(gen){
-      // Parse [FILE:] directives for global general chat
-      const fp=/\[FILE:\s*(.+?)\s*>\s*(.+?)\]\s*(.+?)(?:\n|$)/g;
-      let m;
-      while((m=fp.exec(resp))!==null){
-        const w=worlds.find(w=>w.name.toLowerCase().includes(m[1].toLowerCase().trim()));
-        const a=ASPECTS.find(a=>a.id===m[2].trim()||a.name.toLowerCase().includes(m[2].toLowerCase().trim()));
-        if(w&&a){await db.fileNote(w.id,a.id,m[3].trim());filed.push(w.name+" > "+a.name);}
-      }
-      resp=resp.replace(fp,"").trim();
-    }
-
-    if(worldChat){
-      // Parse [CAT:] directives for world general chat and file to aspects
-      const cp=/\[CAT:\s*(.+?)\]\s*(.+?)(?:\n|$)/g;
-      let m;
-      while((m=cp.exec(resp))!==null){
-        const a=ASPECTS.find(a=>a.id===m[1].trim()||a.name.toLowerCase().includes(m[1].toLowerCase().trim()));
-        if(a){await db.fileNote(cW.id,a.id,m[2].trim());filed.push(cW.name+" > "+a.name);}
-      }
-      resp=resp.replace(cp,"").trim();
-    }
-
-    const aiMsg={role:"assistant",content:resp,timestamp:new Date().toISOString()};
-    if(filed.length)aiMsg._filed=filed;
-    const upd={...chat,messages:[...chat.messages,aiMsg]};
-    setCC(upd);await db.saveChat(upd);setBusy(false);
+    let resp=await aiCall(sys,chat.messages);const filed=[];
+    if(gen){const fp=/\[FILE:\s*(.+?)\s*>\s*(.+?)\]\s*(.+?)(?:\n|$)/g;let m;while((m=fp.exec(resp))!==null){const w=worlds.find(w=>w.name.toLowerCase().includes(m[1].toLowerCase().trim()));const a=ASPECTS.find(a=>a.id===m[2].trim()||a.name.toLowerCase().includes(m[2].toLowerCase().trim()));if(w&&a){await db.fileNote(w.id,a.id,m[3].trim());filed.push(w.name+" > "+a.name);}}resp=resp.replace(fp,"").trim();}
+    if(worldChat){const cp=/\[CAT:\s*(.+?)\]\s*(.+?)(?:\n|$)/g;let m;while((m=cp.exec(resp))!==null){const a=ASPECTS.find(a=>a.id===m[1].trim()||a.name.toLowerCase().includes(m[1].toLowerCase().trim()));if(a){await db.fileNote(cW.id,a.id,m[2].trim());filed.push(cW.name+" > "+a.name);}}resp=resp.replace(cp,"").trim();}
+    const aiMsg={role:"assistant",content:resp,timestamp:new Date().toISOString()};if(filed.length)aiMsg._filed=filed;
+    const upd={...chat,messages:[...chat.messages,aiMsg]};setCC(upd);await db.saveChat(upd);setBusy(false);
   };
 
-  const doTopics=async()=>{
-    if(!cW||!cA)return;setBusy(true);
-    const text=await db.gatherAspectText(cW.id,cA.id);
-    if(!text.trim()){setTopics([]);setBusy(false);flash("No chats yet");return;}
-    const sys="You are a data extractor. "+cA.topicPrompt+" from the text.\nReturn ONLY a JSON array: [{\"name\":\"...\",\"brief\":\"...\"}]\nNo preamble.";
-    const resp=await aiCall(sys,[{role:"user",content:text.slice(0,8000)}],1024);
-    try{const c=resp.trim().replace(/^```\w*\n?/,"").replace(/\n?```$/,"");const a=c.match(/\[[\s\S]*\]/);setTopics(a?JSON.parse(a[0]):[]);}
-    catch(e){setTopics([]);flash("Parse error");}
-    setBusy(false);setScr("topics");
-  };
-
-  const doSheet=async(name)=>{
-    setBusy(true);setScr("charsheet");
-    const text=await db.gatherAspectText(cW.id,"characters");const bible=await db.getBible(cW.id);
-    const sys="Create a Baldur's Gate style character sheet for \""+name+"\" in \""+cW.name+"\". Use ONLY conversation data. For unknowns write \"Unknown\". Include: Name, Race, Class, Alignment, Level, Stats, Background, Traits, Abilities, Equipment, Relationships, Description, Notes.";
-    const resp=await aiCall(sys,[{role:"user",content:"Bible: "+JSON.stringify(bible.facts)+"\n\nConversations:\n"+text.slice(0,6000)}],1024);
-    setSheet(resp);setBusy(false);
-  };
-
-  const doExport=async()=>{setBusy(true);const data=await db.exportAll();const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="worldforge-export.json";a.click();URL.revokeObjectURL(url);setBusy(false);flash("Exported!");};
+  const doTopics=async()=>{if(!cW||!cA)return;setBusy(true);const text=await db.gatherAspectText(cW.id,cA.id);if(!text.trim()){setTopics([]);setBusy(false);flash("No chats yet");return;}const sys="You are a data extractor. "+cA.topicPrompt+" from the text.\nReturn ONLY a JSON array: [{\"name\":\"...\",\"brief\":\"...\"}]\nNo preamble.";const resp=await aiCall(sys,[{role:"user",content:text.slice(0,8000)}],1024);try{const c=resp.trim().replace(/^```\w*\n?/,"").replace(/\n?```$/,"");const a=c.match(/\[[\s\S]*\]/);setTopics(a?JSON.parse(a[0]):[]);}catch(e){setTopics([]);flash("Parse error");}setBusy(false);setScr("topics");};
+  const doSheet=async(name)=>{setBusy(true);setScr("charsheet");const text=await db.gatherAspectText(cW.id,"characters");const bible=await db.getBible(cW.id);const sys="Create a Baldur's Gate style character sheet for \""+name+"\" in \""+cW.name+"\". Use ONLY conversation data. For unknowns write \"Unknown\".";const resp=await aiCall(sys,[{role:"user",content:"Bible: "+JSON.stringify(bible.facts)+"\n\nConversations:\n"+text.slice(0,6000)}],1024);setSheet(resp);setBusy(false);};
+  const doExport=async()=>{const data=await db.exportAll();const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="worldforge-export.json";a.click();URL.revokeObjectURL(url);flash("Exported!");};
   const doImport=async()=>{if(!impTxt.trim())return;try{const d=JSON.parse(impTxt);const c=await db.importAll(d);flash("Imported "+c.worlds+"w "+c.chats+"c");setImpTxt("");await ldW();setScr("settings");}catch(e){flash("Invalid JSON");}};
-  const saveApiKey=async()=>{const k=apiKeyInput.trim();if(k){await db.setApiKey(k);setApiKey(k);setHasKey(true);flash("API key saved!");}else{await db.setApiKey(null);setApiKey("");setHasKey(false);flash("Key removed");}};
+  const saveApiKey=async()=>{const k=apiKeyInput.trim();if(k){await db.setApiKey(k);setHasKey(true);flash("API key saved!");}else{await db.setApiKey(null);setHasKey(false);flash("Key removed");}};
   const openBible=async()=>{if(!cW)return;const b=await db.getBible(cW.id);setBibleData(b.facts||{});setMod({t:"bible"});};
   const openFact=()=>{setModIn("");setMod({t:"fact"});};
   const doFact=async()=>{const r=modIn.trim();setMod(null);if(!r||!cW)return;const m=r.match(/(.+?)\s*-\s*(.+?):\s*(.+)/);if(m){await db.addFact(cW.id,m[1].trim().toLowerCase().replace(/\s+/g,'-'),m[2].trim(),m[3].trim());flash("Added to Bible");}else flash("Format: cat - key: value");};
@@ -297,191 +239,290 @@ function App(){
   const doNote1=()=>{const r=modIn.trim();if(!r||!r.includes(">")){flash("World > Aspect");return;}const[ws,as]=r.split(">");const w=worlds.find(w=>w.name.toLowerCase().includes(ws.trim().toLowerCase()));const a=ASPECTS.find(a=>a.name.toLowerCase().includes(as.trim().toLowerCase())||a.id.includes(as.trim().toLowerCase()));if(!w||!a){flash("Not found");return;}setMod({t:"note2",w,a});setModIn("");};
   const doNote2=async()=>{const n=modIn.trim();if(!n||!mod?.w||!mod?.a){setMod(null);return;}await db.fileNote(mod.w.id,mod.a.id,n);flash("Filed to "+mod.w.name+" > "+mod.a.name);setMod(null);};
 
-  const S=(ch)=>(
-    <div style={{maxWidth:480,margin:"0 auto",height:"100%",background:T.bg,position:"relative",overflow:"hidden",display:"flex",flexDirection:"column"}}>
-      {ch}
-      {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:T.card,border:"1px solid "+T.gold+"44",color:T.gold,padding:"10px 20px",borderRadius:10,fontSize:13,zIndex:100,fontWeight:500}}>{toast}</div>}
-      <Modal open={mod?.t==="newWorld"} title="Create World" onClose={()=>setMod(null)}>
-        <input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doNewWorld()} placeholder="World name..." style={iS}/>
-        <div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doNewWorld} disabled={!modIn.trim()}>Create</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div>
-      </Modal>
-      <Modal open={mod?.t==="fact"} title="Add to Bible" onClose={()=>setMod(null)}>
-        <div style={{fontSize:12,color:T.txD,marginBottom:8}}>category - key: value</div>
-        <input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doFact()} placeholder="characters - Kael: Former soldier" style={iS}/>
-        <div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doFact} disabled={!modIn.trim()}>Add</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div>
-      </Modal>
-      <Modal open={mod?.t==="note1"} title="File Note" onClose={()=>setMod(null)}>
-        <div style={{fontSize:12,color:T.txD,marginBottom:8}}>World {">"} Aspect</div>
-        <input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doNote1()} placeholder="Eldoria > Characters" style={iS}/>
-        <div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doNote1} disabled={!modIn.trim()}>Next</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div>
-      </Modal>
-      <Modal open={mod?.t==="note2"} title={"Note → "+(mod?.w?.name||"")+" > "+(mod?.a?.name||"")} onClose={()=>setMod(null)}>
-        <textarea autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} placeholder="Your note..." rows={3} style={{...iS,resize:"vertical",minHeight:60}}/>
-        <div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doNote2} disabled={!modIn.trim()}>File</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div>
-      </Modal>
-      <Modal open={mod?.t==="bible"} title={(cW?.name||"")+" Bible"} onClose={()=>setMod(null)}>
-        <div style={{maxHeight:400,overflowY:"auto"}}>
-          {bibleData&&Object.keys(bibleData).length>0
-            ?Object.entries(bibleData).map(([cat,ent])=>(<div key={cat} style={{marginBottom:12}}>
-                <div style={{fontSize:13,fontWeight:600,color:T.gold,marginBottom:4,textTransform:"capitalize"}}>{cat.replace(/-/g,' ')}</div>
-                {Object.entries(ent).map(([k,v])=><div key={k} style={{fontSize:13,color:T.txM,padding:"2px 0 2px 12px"}}>{k}: {v}</div>)}
-              </div>))
-            :<div style={{color:T.txD,fontSize:13,padding:12}}>Bible is empty.</div>}
-        </div>
-        <Btn full v="s" onClick={()=>setMod(null)} style={{marginTop:12}}>Close</Btn>
-      </Modal>
-      <Modal open={mod?.t==="delAll"} title="Delete Everything?" onClose={()=>setMod(null)}>
-        <div style={{fontSize:13,color:T.txD,marginBottom:16,lineHeight:1.5}}>Permanently deletes all data.</div>
-        <div style={{display:"flex",gap:8}}><Btn full v="d" onClick={async()=>{setMod(null);await IDB.clear();await ldW();flash("Deleted");goMain();}}>Delete All</Btn><Btn full v="s" onClick={()=>setMod(null)}>Cancel</Btn></div>
-      </Modal>
-    </div>
-  );
+  // === Shell ===
+  const S=(ch)=>(<div style={{height:"100%",background:T.bg,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+    {ch}
+    {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:T.card,border:"1px solid "+T.gold+"44",color:T.gold,padding:"10px 24px",borderRadius:10,fontSize:13,zIndex:100,fontWeight:500}}>{toast}</div>}
+    <Modal open={mod?.t==="newWorld"} title="Create World" onClose={()=>setMod(null)}>
+      <input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} placeholder="World name..." style={{...iS,marginBottom:10}}/>
+      <textarea value={modIn2} onChange={e=>setModIn2(e.target.value)} placeholder="Description (optional) — tone, genre, feel..." rows={3} style={{...iS,resize:"vertical"}}/>
+      <div style={{display:"flex",gap:8,marginTop:14}}><Btn full onClick={doNewWorld} disabled={!modIn.trim()}>Create</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div>
+    </Modal>
+    <Modal open={mod?.t==="fact"} title="Add to Bible" onClose={()=>setMod(null)}>
+      <div style={{fontSize:12,color:T.txD,marginBottom:8}}>category - key: value</div>
+      <input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doFact()} placeholder="characters - Kael: Former soldier" style={iS}/>
+      <div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doFact} disabled={!modIn.trim()}>Add</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div>
+    </Modal>
+    <Modal open={mod?.t==="note1"} title="File Note" onClose={()=>setMod(null)}>
+      <input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doNote1()} placeholder="World > Aspect" style={iS}/>
+      <div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doNote1} disabled={!modIn.trim()}>Next</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div>
+    </Modal>
+    <Modal open={mod?.t==="note2"} title={"Note → "+(mod?.w?.name||"")+" > "+(mod?.a?.name||"")} onClose={()=>setMod(null)}>
+      <textarea autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} placeholder="Your note..." rows={3} style={{...iS,resize:"vertical"}}/>
+      <div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doNote2} disabled={!modIn.trim()}>File</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div>
+    </Modal>
+    <Modal open={mod?.t==="bible"} title={(cW?.name||"")+" Bible"} onClose={()=>setMod(null)}>
+      <div style={{maxHeight:500,overflowY:"auto"}}>{bibleData&&Object.keys(bibleData).length>0
+        ?Object.entries(bibleData).map(([cat,ent])=>(<div key={cat} style={{marginBottom:14}}>
+          <div style={{fontSize:14,fontWeight:600,color:T.gold,marginBottom:4,textTransform:"capitalize"}}>{cat.replace(/-/g,' ')}</div>
+          {Object.entries(ent).map(([k,v])=><div key={k} style={{fontSize:13,color:T.txM,padding:"2px 0 2px 14px"}}>{k}: {v}</div>)}</div>))
+        :<div style={{color:T.txD,fontSize:13,padding:12}}>Bible is empty.</div>}
+      </div><Btn full v="s" onClick={()=>setMod(null)} style={{marginTop:14}}>Close</Btn>
+    </Modal>
+    <Modal open={mod?.t==="delAll"} title="Delete Everything?" onClose={()=>setMod(null)}>
+      <div style={{fontSize:13,color:T.txD,marginBottom:16}}>Permanently deletes all data.</div>
+      <div style={{display:"flex",gap:8}}><Btn full v="d" onClick={async()=>{setMod(null);await IDB.clear();await ldW();flash("Deleted");goMain();}}>Delete All</Btn><Btn full v="s" onClick={()=>setMod(null)}>Cancel</Btn></div>
+    </Modal>
+  </div>);
 
   // === SCREENS ===
 
-  if(scr==="main")return S(<>
-    <div style={{padding:"44px 24px 24px",textAlign:"center"}}>
-      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:36,fontWeight:700,color:T.gold}}>WorldForge</div>
-      <div style={{color:T.txD,fontSize:13,marginTop:6}}>Worldbuilding AI Notebook</div>
-      {!hasKey&&<div style={{marginTop:12,padding:"8px 12px",background:T.red+"33",borderRadius:8,fontSize:12,color:T.redTx}}>No API key set. Go to Settings to connect Claude.</div>}
+  // HOME — 3 big cards
+  if(scr==="main")return S(
+    <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40}}>
+      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:52,fontWeight:700,color:T.gold,marginBottom:6,letterSpacing:2}}>WorldForge</div>
+      <div style={{color:T.txD,fontSize:15,marginBottom:40}}>Worldbuilding AI Notebook</div>
+      {!hasKey&&<div style={{marginBottom:24,padding:"8px 20px",background:T.red+"33",borderRadius:8,fontSize:13,color:T.redTx}}>No API key set — go to Settings</div>}
+      <div style={{display:"flex",gap:24,width:"100%",maxWidth:900}}>
+        {[{icon:"🌍",label:"Worlds",desc:"Browse, create, and develop your worlds",onClick:goWorlds},
+          {icon:"⚒️",label:"ForgeMaster",desc:"General chat with cross-world intelligence",onClick:goGen},
+          {icon:"⚙️",label:"Settings",desc:"API key, export, import, preferences",onClick:()=>{setScr("settings");db.getApiKey().then(k=>setApiKeyInput(k||""));}}
+        ].map((c,i)=>(
+          <button key={i} onClick={c.onClick} style={{flex:1,background:T.sf,border:"2px solid "+T.bd,borderRadius:16,padding:"48px 24px",cursor:"pointer",
+            textAlign:"center",transition:"border-color .2s, transform .15s",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:280}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=T.gold;e.currentTarget.style.transform="translateY(-4px)";}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bd;e.currentTarget.style.transform="translateY(0)";}}>
+            <div style={{fontSize:48,marginBottom:20}}>{c.icon}</div>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold,marginBottom:8}}>{c.label}</div>
+            <div style={{fontSize:13,color:T.txD,lineHeight:1.5}}>{c.desc}</div>
+          </button>
+        ))}
+      </div>
     </div>
-    <div style={{padding:"8px 0"}}>
-      <Row icon="🌍" label="Worlds" detail={worlds.length+" world"+(worlds.length!==1?"s":"")} onClick={goWorlds}/>
-      <Row icon="💬" label="General Chat" detail="Freeform with cross-world filing" onClick={goGen}/>
-      <Row icon="⚙️" label="Settings" detail="API key, export, import" onClick={()=>{setScr("settings");db.getApiKey().then(k=>{setApiKeyInput(k||"");});}}/>
-    </div>
-  </>);
+  );
 
+  // WORLDS — large cards with thumbnail + description
   if(scr==="worlds")return S(<>
-    <Hdr title="Worlds" subtitle={worlds.length+" / "+MAX_WORLDS} onBack={goMain} right={<Btn sm onClick={openNewWorld}>+ New</Btn>}/>
-    {worlds.length===0
-      ?<div style={{padding:"60px 32px",textAlign:"center"}}><div style={{fontSize:48,marginBottom:16,opacity:.4}}>🌍</div>
-        <div style={{color:T.txD,fontSize:14,marginBottom:20}}>No worlds yet</div><Btn onClick={openNewWorld}>Create World</Btn></div>
-      :worlds.map(w=><Row key={w.id} icon="🌍" label={w.name} detail={new Date(w.updated).toLocaleDateString()} count={w.chatCount||0} onClick={()=>goWorld(w)}/>)}
+    <div style={{padding:"24px 40px 16px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}>
+      <button onClick={goMain} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button>
+      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:700,color:T.gold,flex:1}}>Worlds</div>
+      <Btn onClick={openNewWorld}>+ New World</Btn>
+    </div>
+    <div style={{flex:1,overflowY:"auto",padding:"24px 40px"}}>
+      {worlds.length===0?<div style={{textAlign:"center",padding:"80px 0"}}><div style={{fontSize:64,marginBottom:20,opacity:.3}}>🌍</div><div style={{color:T.txD,fontSize:16,marginBottom:24}}>No worlds yet. Create your first!</div><Btn onClick={openNewWorld}>Create World</Btn></div>
+      :worlds.map(w=>(
+        <button key={w.id} onClick={()=>goWorld(w)} style={{display:"flex",gap:20,width:"100%",maxWidth:800,margin:"0 auto 16px",padding:20,
+          background:T.sf,border:"2px solid "+T.bd,borderRadius:12,cursor:"pointer",textAlign:"left",transition:"border-color .2s"}}
+          onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold}
+          onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
+          <div style={{width:100,height:100,background:T.sf2,border:"1px solid "+T.bd,borderRadius:8,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36}}>🌍</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,marginBottom:6}}>{w.name}</div>
+            <div style={{fontSize:13,color:T.txM,lineHeight:1.5}}>{worldDescs[w.id]||"New world"}</div>
+            <div style={{fontSize:11,color:T.txD,marginTop:8}}>Updated {new Date(w.updated).toLocaleDateString()}</div>
+          </div>
+        </button>
+      ))}
+    </div>
   </>);
 
+  // WORLD VIEW — World Chat at top, category grid below
   if(scr==="world"&&cW)return S(<>
-    <Hdr title={cW.name} subtitle="Select an aspect" onBack={goWorlds} right={<Btn sm v="g" onClick={openBible} style={{fontSize:18,padding:"4px 10px"}}>📖</Btn>}/>
-    <div style={{flex:1,overflowY:"auto"}}>
-      <Row icon="💬" label="World Chat" detail="Discuss anything — auto-categorized" onClick={goWorldChat}/>
-      <div style={{height:1,background:T.bd,margin:"4px 20px"}}/>
-      {ASPECTS.map(a=><Row key={a.id} icon={a.icon} label={a.name} onClick={()=>goAspect(a)}/>)}
+    <div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}>
+      <button onClick={goWorlds} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button>
+      <div style={{flex:1}}>
+        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold}}>{cW.name}</div>
+      </div>
+      <Btn sm v="g" onClick={openBible} style={{fontSize:16,marginRight:8}}>📖 Bible</Btn>
+    </div>
+    <div style={{flex:1,overflowY:"auto",padding:"20px 32px"}}>
+      {/* World Chat Banner */}
+      <button onClick={goWorldChat} style={{width:"100%",padding:"28px 28px",background:"linear-gradient(135deg,"+T.sf+" 0%,"+T.sf2+" 100%)",
+        border:"2px solid "+T.bd,borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:24,transition:"border-color .2s"}}
+        onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold}
+        onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
+        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,marginBottom:6}}>⚒️ World Chat</div>
+        <div style={{fontSize:13,color:T.txM}}>Discuss anything about {cW.name} — topics auto-categorize to the right aspect</div>
+        {aspCounts["__worldchat__"]>0&&<div style={{fontSize:11,color:T.txD,marginTop:6}}>{aspCounts["__worldchat__"]} chat{aspCounts["__worldchat__"]!==1?"s":""}</div>}
+      </button>
+      {/* Category Grid */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+        {ASPECTS.map(a=>{
+          const cnt=aspCounts[a.id]||0;
+          return(<button key={a.id} onClick={()=>goAspect(a)} style={{padding:"20px 12px",background:T.sf,border:"1px solid "+T.bd,borderRadius:10,
+            cursor:"pointer",textAlign:"center",transition:"border-color .2s, transform .15s",position:"relative"}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=T.gold;e.currentTarget.style.transform="translateY(-2px)";}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bd;e.currentTarget.style.transform="translateY(0)";}}>
+            <div style={{fontSize:28,marginBottom:8}}>{a.icon}</div>
+            <div style={{fontSize:12,fontWeight:500,color:T.tx,lineHeight:1.3}}>{a.name}</div>
+            {cnt>0&&<div style={{position:"absolute",top:6,right:8,fontSize:10,color:T.txD,background:T.sf2,padding:"1px 6px",borderRadius:8}}>{cnt}</div>}
+          </button>);
+        })}
+      </div>
     </div>
   </>);
 
+  // ASPECT
   if(scr==="aspect"&&cW&&cA)return S(<>
-    <Hdr title={cA.name} subtitle={cW.name} onBack={()=>setScr("world")}/>
-    <div style={{padding:"8px 0"}}>
-      <Row icon="✨" label="Start New Chat" onClick={async()=>{const c=await db.createChat(cW.id,cA.id);setCC(c);setGen(false);setWorldChat(false);setScr("chat");}}/>
-      <Row icon="💬" label="Continue Chat" count={cList.length} onClick={()=>{if(cList.length)setScr("chatlist");else flash("No chats yet");}}/>
-      <Row icon="📋" label="List Topics Discussed" detail="Extract entities from all chats" onClick={doTopics}/>
+    <div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}>
+      <button onClick={()=>setScr("world")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button>
+      <div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold}}>{cA.icon+" "+cA.name}</div><div style={{fontSize:12,color:T.txD}}>{cW.name}</div></div>
     </div>
-    {cList.length>0&&<div style={{padding:"16px 20px"}}>
-      <div style={{fontSize:11,color:T.txD,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Recent</div>
-      {cList.slice(0,3).map(c=><div key={c.id} onClick={()=>goChat(c)} style={{padding:"10px 12px",marginBottom:4,background:T.sf,borderRadius:8,cursor:"pointer"}}>
-        <div style={{fontSize:13,color:T.txM}}>{c.title}</div>
-        <div style={{fontSize:11,color:T.txD,marginTop:2}}>{(c.messages?.length||0)+" messages"}</div>
-      </div>)}
-    </div>}
+    <div style={{flex:1,overflowY:"auto",padding:"20px 32px",maxWidth:700}}>
+      <div style={{display:"flex",gap:12,marginBottom:24}}>
+        <Btn onClick={async()=>{const c=await db.createChat(cW.id,cA.id);setCC(c);setGen(false);setWorldChat(false);setScr("chat");}}>✨ New Chat</Btn>
+        <Btn v="s" onClick={doTopics}>📋 List Topics</Btn>
+      </div>
+      {cList.length===0?<div style={{color:T.txD,fontSize:14,padding:20}}>No chats yet. Start a new one!</div>
+        :cList.map(c=><button key={c.id} onClick={()=>goChat(c)} style={{display:"block",width:"100%",padding:"14px 16px",marginBottom:8,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx,transition:"border-color .15s"}}
+          onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
+          <div style={{fontSize:14,fontWeight:500}}>{c.title}</div>
+          <div style={{fontSize:11,color:T.txD,marginTop:4}}>{new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" messages"}</div>
+        </button>)}
+    </div>
   </>);
 
-  if(scr==="chatlist")return S(<>
-    <Hdr title="Continue Chat" subtitle={cA?.name||"General"} onBack={()=>setScr(gen?"general":"aspect")}/>
-    {cList.map(c=><Row key={c.id} icon="💬" label={c.title} detail={new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" msgs"} onClick={()=>goChat(c,gen)}/>)}
-  </>);
-
+  // WORLD CHAT LIST
   if(scr==="worldchatlist")return S(<>
-    <Hdr title="World Chat" subtitle={cW?.name} onBack={()=>setScr("world")} right={<Btn sm onClick={async()=>{const c=await db.createChat(cW.id,"__worldchat__");setCC(c);setGen(false);setWorldChat(true);setScr("chat");}}>+ New</Btn>}/>
-    {cList.length===0
-      ?<div style={{padding:"60px 32px",textAlign:"center"}}><div style={{fontSize:48,marginBottom:16,opacity:.4}}>💬</div>
-        <div style={{color:T.txD,fontSize:14,marginBottom:20}}>No world chats yet</div>
-        <Btn onClick={async()=>{const c=await db.createChat(cW.id,"__worldchat__");setCC(c);setGen(false);setWorldChat(true);setScr("chat");}}>New World Chat</Btn></div>
-      :cList.map(c=><Row key={c.id} icon="💬" label={c.title} detail={new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" msgs"} onClick={()=>goChat(c,false,true)}/>)}
+    <div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}>
+      <button onClick={()=>setScr("world")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button>
+      <div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold}}>World Chat</div><div style={{fontSize:12,color:T.txD}}>{cW?.name}</div></div>
+      <Btn sm onClick={async()=>{const c=await db.createChat(cW.id,"__worldchat__");setCC(c);setGen(false);setWorldChat(true);setScr("chat");}}>+ New</Btn>
+    </div>
+    <div style={{flex:1,overflowY:"auto",padding:"20px 32px",maxWidth:700}}>
+      {cList.length===0?<div style={{textAlign:"center",padding:40}}><div style={{color:T.txD,marginBottom:16}}>No world chats yet</div><Btn onClick={async()=>{const c=await db.createChat(cW.id,"__worldchat__");setCC(c);setGen(false);setWorldChat(true);setScr("chat");}}>Start World Chat</Btn></div>
+        :cList.map(c=><button key={c.id} onClick={()=>goChat(c,false,true)} style={{display:"block",width:"100%",padding:"14px 16px",marginBottom:8,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx}}
+          onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
+          <div style={{fontSize:14,fontWeight:500}}>{c.title}</div>
+          <div style={{fontSize:11,color:T.txD,marginTop:4}}>{new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" msgs"}</div>
+        </button>)}
+    </div>
   </>);
 
+  // TOPICS
   if(scr==="topics")return S(<>
-    <Hdr title={"Topics — "+(cA?.name||"")} subtitle={cW?.name} onBack={()=>setScr("aspect")}/>
-    {busy?<div style={{padding:40,textAlign:"center",color:T.txD}}>Extracting...</div>
-      :topics.length===0?<div style={{padding:"60px 32px",textAlign:"center"}}><div style={{fontSize:48,marginBottom:16,opacity:.4}}>📋</div><div style={{color:T.txD,fontSize:14}}>No topics found yet</div></div>
-      :topics.map((t,i)=><Row key={i} icon={cA.topicType==="character"?"👤":"📌"} label={t.name} detail={t.brief}
-        onClick={()=>cA.topicType==="character"?doSheet(t.name):flash(t.brief||t.name)}/>)}
+    <div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}>
+      <button onClick={()=>setScr("aspect")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button>
+      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold}}>{"Topics — "+cA?.name}</div>
+    </div>
+    <div style={{flex:1,overflowY:"auto",padding:"20px 32px",maxWidth:700}}>
+      {busy?<div style={{padding:40,textAlign:"center",color:T.txD}}>Extracting...</div>
+        :topics.length===0?<div style={{padding:40,textAlign:"center",color:T.txD}}>No topics found yet</div>
+        :topics.map((t,i)=><button key={i} onClick={()=>cA.topicType==="character"?doSheet(t.name):flash(t.brief||t.name)}
+          style={{display:"block",width:"100%",padding:"14px 16px",marginBottom:8,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx}}
+          onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
+          <div style={{fontSize:14,fontWeight:500}}>{(cA.topicType==="character"?"👤 ":"📌 ")+t.name}</div>
+          {t.brief&&<div style={{fontSize:12,color:T.txM,marginTop:4}}>{t.brief}</div>}
+        </button>)}
+    </div>
   </>);
 
+  // CHARACTER SHEET
   if(scr==="charsheet")return S(<>
-    <Hdr title="Character Sheet" subtitle={cW?.name} onBack={()=>setScr("topics")}/>
-    {busy?<div style={{padding:40,textAlign:"center",color:T.txD}}>Generating...</div>
-      :<div style={{padding:16,fontFamily:"monospace",fontSize:12,lineHeight:1.6,whiteSpace:"pre-wrap",
-        background:T.sf,margin:12,borderRadius:8,border:"1px solid "+T.bd,color:T.tx,flex:1,overflowY:"auto"}}>{sheet}</div>}
+    <div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}>
+      <button onClick={()=>setScr("topics")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button>
+      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold}}>Character Sheet</div>
+    </div>
+    <div style={{flex:1,overflowY:"auto",padding:"20px 32px"}}>
+      {busy?<div style={{padding:40,textAlign:"center",color:T.txD}}>Generating...</div>
+        :<div style={{fontFamily:"monospace",fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap",background:T.sf,padding:24,borderRadius:10,border:"1px solid "+T.bd,maxWidth:700}}>{sheet}</div>}
+    </div>
   </>);
 
+  // GENERAL CHAT LIST
   if(scr==="general")return S(<>
-    <Hdr title="General Chat" subtitle="Freeform worldbuilding" onBack={goMain}
-      right={<Btn sm onClick={async()=>{const c=await db.createGeneralChat();setCC(c);setGen(true);setWorldChat(false);setScr("chat");}}>+ New</Btn>}/>
-    {cList.length===0
-      ?<div style={{padding:"60px 32px",textAlign:"center"}}><div style={{fontSize:48,marginBottom:16,opacity:.4}}>💬</div>
-        <div style={{color:T.txD,fontSize:14,marginBottom:20}}>No general chats yet</div>
-        <Btn onClick={async()=>{const c=await db.createGeneralChat();setCC(c);setGen(true);setWorldChat(false);setScr("chat");}}>New Chat</Btn></div>
-      :cList.map(c=><Row key={c.id} icon="💬" label={c.title} detail={new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" msgs"} onClick={()=>goChat(c,true)}/>)}
+    <div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}>
+      <button onClick={goMain} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button>
+      <div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold}}>ForgeMaster</div><div style={{fontSize:12,color:T.txD}}>General Chat</div></div>
+      <Btn sm onClick={async()=>{const c=await db.createGeneralChat();setCC(c);setGen(true);setWorldChat(false);setScr("chat");}}>+ New Chat</Btn>
+    </div>
+    <div style={{flex:1,overflowY:"auto",padding:"20px 32px",maxWidth:700}}>
+      {cList.length===0?<div style={{textAlign:"center",padding:40}}><div style={{fontSize:48,marginBottom:16,opacity:.3}}>⚒️</div><div style={{color:T.txD,marginBottom:16}}>No chats yet</div><Btn onClick={async()=>{const c=await db.createGeneralChat();setCC(c);setGen(true);setWorldChat(false);setScr("chat");}}>New Chat</Btn></div>
+        :cList.map(c=><button key={c.id} onClick={()=>goChat(c,true)} style={{display:"block",width:"100%",padding:"14px 16px",marginBottom:8,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx}}
+          onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
+          <div style={{fontSize:14,fontWeight:500}}>{c.title}</div>
+          <div style={{fontSize:11,color:T.txD,marginTop:4}}>{new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" msgs"}</div>
+        </button>)}
+    </div>
   </>);
 
+  // CHAT
   if(scr==="chat"&&cC)return S(
     <React.Fragment>
-      <Hdr title={gen?"General Chat":(worldChat?"World Chat":(cA?.name||"Chat"))}
-        subtitle={gen?cC.title:((cW?.name||"")+(worldChat?"":" · "+(cA?.name||"")))}
-        onBack={()=>{setScr(gen?"general":(worldChat?"worldchatlist":"aspect"));setCC(null);}}
-        right={<div style={{display:"flex",gap:2}}>
-          {!gen&&<Btn sm v="g" onClick={openFact} style={{fontSize:16,padding:"4px 8px"}}>📝</Btn>}
-          <Btn sm v="g" onClick={openNote} style={{fontSize:16,padding:"4px 8px"}}>↗</Btn>
-          {!gen&&<Btn sm v="g" onClick={openBible} style={{fontSize:16,padding:"4px 8px"}}>📖</Btn>}
-        </div>}/>
-      <div style={{flex:1,overflowY:"auto",padding:"12px 0"}}>
-        {(!cC.messages||cC.messages.length===0)&&<div style={{padding:"40px 24px",textAlign:"center",color:T.txD,fontSize:13}}>
-          {gen?"Type anything. Mention a world to auto-file notes.":(worldChat?"Discuss anything about "+cW.name+". Topics auto-file to the right aspect.":"Start worldbuilding!")}</div>}
-        {(cC.messages||[]).map((m,i)=><Bub key={i} msg={m}/>)}
-        {busy&&<div style={{padding:"12px 20px",color:T.goldD,fontSize:13,fontStyle:"italic"}}>Forging response...</div>}
-        <div ref={endRef}/>
+      <div style={{padding:"12px 32px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd,flexShrink:0}}>
+        <button onClick={()=>{setScr(gen?"general":(worldChat?"worldchatlist":"aspect"));setCC(null);}} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:T.gold,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{gen?"ForgeMaster":(worldChat?"World Chat":cA?.name)}</div>
+          <div style={{fontSize:11,color:T.txD}}>{gen?cC.title:cW?.name}</div>
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          {!gen&&<Btn sm v="g" onClick={openFact}>📝 Bible</Btn>}
+          <Btn sm v="g" onClick={openNote}>↗ Note</Btn>
+          {!gen&&<Btn sm v="g" onClick={openBible}>📖</Btn>}
+        </div>
       </div>
-      <div style={{padding:"8px 12px 16px",borderTop:"1px solid "+T.bd,background:T.sf,display:"flex",gap:8,alignItems:"flex-end",flexShrink:0}}>
-        <textarea value={inp} onChange={e=>setInp(e.target.value)} placeholder="Type your message..."
-          onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
-          rows={1} style={{flex:1,resize:"none",padding:"10px 14px",borderRadius:12,border:"1px solid "+T.bd,
-            background:T.bg,color:T.tx,fontSize:14,fontFamily:"inherit",outline:"none",maxHeight:120,lineHeight:1.4}}
-          onInput={e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,120)+"px";}}/>
-        <button onClick={send} disabled={busy||!inp.trim()} style={{background:T.gold,border:"none",borderRadius:12,width:44,height:44,
-          cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
-          opacity:busy||!inp.trim()?0.4:1,fontSize:18,flexShrink:0,color:T.bg,fontWeight:700}}>↑</button>
+      <div style={{flex:1,overflowY:"auto",padding:"16px 32px"}}>
+        <div style={{maxWidth:700,margin:"0 auto"}}>
+          {(!cC.messages||cC.messages.length===0)&&<div style={{padding:"40px 0",textAlign:"center",color:T.txD,fontSize:14}}>
+            {gen?"Type anything. Mention a world to auto-file notes.":(worldChat?"Discuss anything about "+cW.name+". Topics auto-file.":"Start worldbuilding!")}</div>}
+          {(cC.messages||[]).map((m,i)=><Bub key={i} msg={m}/>)}
+          {busy&&<div style={{padding:"12px 0",color:T.goldD,fontSize:13,fontStyle:"italic"}}>Forging response...</div>}
+          <div ref={endRef}/>
+        </div>
+      </div>
+      <div style={{padding:"12px 32px 16px",borderTop:"1px solid "+T.bd,background:T.sf,flexShrink:0}}>
+        <div style={{maxWidth:700,margin:"0 auto",display:"flex",gap:10,alignItems:"flex-end"}}>
+          <textarea value={inp} onChange={e=>setInp(e.target.value)} placeholder="Type your message..."
+            onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
+            rows={1} style={{flex:1,resize:"none",padding:"10px 16px",borderRadius:10,border:"1px solid "+T.bd,
+              background:T.bg,color:T.tx,fontSize:14,fontFamily:"inherit",outline:"none",maxHeight:140,lineHeight:1.4}}
+            onInput={e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,140)+"px";}}/>
+          <button onClick={send} disabled={busy||!inp.trim()} style={{background:T.gold,border:"none",borderRadius:10,width:44,height:44,
+            cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+            opacity:busy||!inp.trim()?0.4:1,fontSize:18,flexShrink:0,color:T.bg,fontWeight:700}}>{"↑"}</button>
+        </div>
       </div>
     </React.Fragment>
   );
 
-  if(scr==="settings")return S(<div style={{flex:1,overflowY:"auto"}}>
-    <Hdr title="Settings" onBack={goMain}/>
-    <div style={{padding:"20px 20px 0"}}>
+  // SETTINGS
+  if(scr==="settings")return S(<>
+    <div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}>
+      <button onClick={goMain} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button>
+      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold}}>Settings</div>
+    </div>
+    <div style={{flex:1,overflowY:"auto",padding:"24px 32px",maxWidth:600}}>
       <div style={{fontSize:13,fontWeight:600,color:T.gold,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Claude API Key</div>
-      <div style={{fontSize:12,color:T.txD,marginBottom:10,lineHeight:1.5}}>Required for AI features. Get yours at console.anthropic.com</div>
-      <input type="password" value={apiKeyInput} onChange={e=>setApiKeyInput(e.target.value)} placeholder="sk-ant-api03-..." style={{...iS,fontFamily:"monospace",fontSize:13}}/>
+      <div style={{fontSize:12,color:T.txD,marginBottom:10}}>Required for AI. Get yours at console.anthropic.com</div>
+      <input type="password" value={apiKeyInput} onChange={e=>setApiKeyInput(e.target.value)} placeholder="sk-ant-api03-..." style={{...iS,fontFamily:"monospace",fontSize:13,maxWidth:400}}/>
       <div style={{display:"flex",gap:8,marginTop:10}}>
-        <Btn full onClick={saveApiKey}>{hasKey?"Update Key":"Save Key"}</Btn>
-        {hasKey&&<Btn v="s" onClick={async()=>{setApiKeyInput("");await db.setApiKey(null);setApiKey("");setHasKey(false);flash("Key removed");}}>Remove</Btn>}
+        <Btn onClick={saveApiKey}>{hasKey?"Update Key":"Save Key"}</Btn>
+        {hasKey&&<Btn v="s" onClick={async()=>{setApiKeyInput("");await db.setApiKey(null);setHasKey(false);flash("Removed");}}>Remove</Btn>}
       </div>
-      <div style={{fontSize:11,color:T.txD,marginTop:8,lineHeight:1.5}}>{hasKey?"✅ API key saved. Stored locally on this device only.":"⚠️ No API key. Chats will not work until you add one."}</div>
+      <div style={{fontSize:11,color:T.txD,marginTop:8}}>{hasKey?"✅ Saved locally.":"⚠️ No key. Chats won't work."}</div>
+      <div style={{borderTop:"1px solid "+T.bd,marginTop:24,paddingTop:20}}>
+        <div style={{fontSize:13,fontWeight:600,color:T.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:1}}>Data</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <Btn v="s" onClick={doExport}>📤 Export</Btn>
+          <Btn v="s" onClick={()=>setScr("import")}>📥 Import</Btn>
+          <Btn v="d" onClick={()=>setMod({t:"delAll"})}>🗑️ Delete All</Btn>
+        </div>
+      </div>
+      <div style={{marginTop:32,fontSize:11,color:T.txD,lineHeight:1.6}}>WorldForge Desktop v2<br/>AI: Claude Sonnet<br/>Storage: IndexedDB (local)<br/>Compatible with mobile + terminal</div>
     </div>
-    <div style={{margin:"20px 20px 0",borderTop:"1px solid "+T.bd,paddingTop:16}}>
-      <div style={{fontSize:13,fontWeight:600,color:T.gold,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Data</div>
-    </div>
-    <Row icon="📤" label="Export All Data" detail="Download JSON for desktop sync" onClick={doExport}/>
-    <Row icon="📥" label="Import Data" detail="Load JSON from desktop" onClick={()=>setScr("import")}/>
-    <Row icon="🗑️" label="Delete All Data" detail="Cannot be undone" danger onClick={()=>setMod({t:"delAll"})}/>
-    <div style={{padding:"24px 20px"}}><div style={{fontSize:11,color:T.txD,lineHeight:1.6}}>WorldForge PWA v2{"\n"}AI: Claude Sonnet (your API key){"\n"}Storage: IndexedDB (local device){"\n"}Compatible with terminal edition</div></div>
-  </div>);
+  </>);
 
+  // IMPORT
   if(scr==="import")return S(<>
-    <Hdr title="Import Data" onBack={()=>setScr("settings")}/>
-    <div style={{padding:20}}>
-      <div style={{fontSize:13,color:T.txD,marginBottom:12,lineHeight:1.5}}>Paste JSON from desktop export.</div>
-      <textarea value={impTxt} onChange={e=>setImpTxt(e.target.value)} placeholder="Paste JSON here..." rows={10}
-        style={{width:"100%",resize:"vertical",padding:14,borderRadius:8,border:"1px solid "+T.bd,background:T.sf,color:T.tx,fontSize:13,fontFamily:"monospace",outline:"none",lineHeight:1.5}}/>
-      <div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doImport}>Import</Btn><Btn v="s" onClick={()=>{setImpTxt("");setScr("settings");}}>Cancel</Btn></div>
+    <div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}>
+      <button onClick={()=>setScr("settings")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button>
+      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold}}>Import Data</div>
+    </div>
+    <div style={{flex:1,overflowY:"auto",padding:"24px 32px",maxWidth:600}}>
+      <div style={{fontSize:13,color:T.txD,marginBottom:12}}>Paste JSON from mobile or terminal export.</div>
+      <textarea value={impTxt} onChange={e=>setImpTxt(e.target.value)} placeholder="Paste JSON..." rows={14}
+        style={{width:"100%",resize:"vertical",padding:14,borderRadius:8,border:"1px solid "+T.bd,background:T.sf,color:T.tx,fontSize:13,fontFamily:"monospace",outline:"none"}}/>
+      <div style={{display:"flex",gap:8,marginTop:12}}><Btn onClick={doImport}>Import</Btn><Btn v="s" onClick={()=>{setImpTxt("");setScr("settings");}}>Cancel</Btn></div>
     </div>
   </>);
 

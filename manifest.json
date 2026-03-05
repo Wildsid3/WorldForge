@@ -1,12 +1,11 @@
 {
-  "name": "WorldForge",
+  "name": "WorldForge Desktop",
   "short_name": "WorldForge",
-  "description": "Worldbuilding AI Notebook",
+  "description": "Worldbuilding AI Notebook — Desktop Edition",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f0f0f",
   "theme_color": "#c8a24e",
-  "orientation": "portrait",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
   ]
