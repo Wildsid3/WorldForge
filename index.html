@@ -13,8 +13,9 @@
 body{background:#0a0a0c;color:#e8e4dc;font-family:'Source Sans 3',sans-serif;-webkit-font-smoothing:antialiased}
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#111}::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
 input,textarea,button,select{font-family:inherit}
-.map-container svg{width:100%;height:100%}
+.map-container svg{width:100%;height:100%;background:transparent}
 .map-container svg path:hover,.map-container svg circle:hover{opacity:0.8;cursor:pointer}
+.map-container svg text{pointer-events:none}
 </style>
 </head>
 <body><div id="root"></div>
@@ -73,28 +74,63 @@ function mkId(){return Date.now().toString(36)+'-'+Math.random().toString(36).sl
 
 // === Azgaar Map Parser ===
 window.parseAzgaarMap=function(text){
-  const result={svg:null,pack:null,params:null,error:null};
+  const result={svg:null,pack:null,params:null,error:null,debug:[]};
   try{
-    // Find SVG
+    result.debug.push("File size: "+text.length+" chars");
     const svgStart=text.indexOf('<svg');
-    const svgEnd=text.indexOf('</svg>');
-    if(svgStart<0||svgEnd<0){result.error="No SVG found in map file";return result;}
+    const svgEnd=text.lastIndexOf('</svg>');
+    if(svgStart<0||svgEnd<0){result.error="No SVG found ("+text.length+" chars)";return result;}
     result.svg=text.substring(svgStart,svgEnd+6);
-    // Parse pack JSON - first { after </svg>
-    const afterSvg=text.substring(svgEnd+7);
-    let depth=0,start=-1,found=null;
+    result.debug.push("SVG: "+result.svg.length+" chars");
+    // Params from first line
+    const firstLine=text.substring(0,svgStart).split('\n')[0].trim();
+    if(firstLine.startsWith('{')){try{result.params=JSON.parse(firstLine);result.debug.push("Params OK");}catch(e){}}
+    // After SVG: may contain grid JSON then pack JSON (Azgaar v1.113+ format)
+    const afterSvg=text.substring(svgEnd+6);
+    result.debug.push("After SVG: "+afterSvg.length+" chars");
+    // Find all top-level JSON objects by matching balanced braces
+    const jsonObjects=[];
+    let depth=0,objStart=-1;
     for(let i=0;i<afterSvg.length;i++){
-      if(afterSvg[i]==='{'){if(depth===0)start=i;depth++;}
-      if(afterSvg[i]==='}'){depth--;if(depth===0&&start>=0){found=afterSvg.substring(start,i+1);break;}}
+      const ch=afterSvg[i];
+      if(ch==='{'){if(depth===0)objStart=i;depth++;}
+      else if(ch==='}'){depth--;if(depth===0&&objStart>=0){jsonObjects.push({start:objStart,end:i+1});objStart=-1;}}
     }
-    if(found)result.pack=JSON.parse(found);
-    else result.error="Could not extract pack data";
-    // Parse params from before SVG
-    const beforeSvg=text.substring(0,svgStart);
-    const paramLines=beforeSvg.split('\n').filter(l=>l.trim());
-    if(paramLines.length>0){
-      try{result.params=JSON.parse(paramLines[0]);}catch(e){}
+    result.debug.push("Found "+jsonObjects.length+" JSON objects after SVG");
+    // Try each JSON object - the pack is the one with "states" or "burgs" keys
+    for(let idx=0;idx<jsonObjects.length;idx++){
+      const{start,end}=jsonObjects[idx];
+      const str=afterSvg.substring(start,end);
+      result.debug.push("Object "+idx+": "+str.length+" chars, starts: "+str.substring(0,60));
+      try{
+        const obj=JSON.parse(str);
+        const keys=Object.keys(obj);
+        result.debug.push("Object "+idx+" keys: "+keys.slice(0,10).join(","));
+        // Check if this is the pack (has states/burgs/cultures)
+        if(obj.states||obj.burgs||obj.cultures){
+          result.pack=obj;
+          result.debug.push("PACK found at object "+idx+"! States:"+((obj.states||[]).length)+", Burgs:"+((obj.burgs||[]).length)+", Cultures:"+((obj.cultures||[]).length)+", Religions:"+((obj.religions||[]).length)+", Rivers:"+((obj.rivers||[]).length));
+          break;
+        }
+        // This might be the grid object - skip and continue
+        if(obj.cells||obj.vertices||obj.features){
+          result.debug.push("Object "+idx+" is grid data - skipping");
+          continue;
+        }
+      }catch(e){
+        result.debug.push("Object "+idx+" parse fail: "+e.message.substring(0,100));
+        // For very large objects, try a substring approach
+        if(str.length>1000000){
+          result.debug.push("Large object - checking for pack markers");
+          if(str.indexOf('"states"')>0&&str.indexOf('"burgs"')>0){
+            result.debug.push("Has pack markers, retrying parse...");
+            try{result.pack=JSON.parse(str);result.debug.push("Retry succeeded!");break;}catch(e2){result.debug.push("Retry failed: "+e2.message.substring(0,100));}
+          }
+        }
+      }
     }
+    if(!result.pack&&jsonObjects.length===0){result.error="No JSON data found after SVG";}
+    else if(!result.pack){result.error="Pack data not found in "+jsonObjects.length+" JSON objects. Check console for debug.";}
   }catch(e){result.error="Parse error: "+e.message;}
   return result;
 };
@@ -236,8 +272,8 @@ window.db={
   // Import map and generate all topics
   async importAzgaarMap(wid,fileText){
     const parsed=parseAzgaarMap(fileText);
-    if(parsed.error)return{error:parsed.error};
-    await this.saveMapSvg(wid,parsed.svg);
+    if(parsed.error)return{error:parsed.error,debug:parsed.debug};
+    if(parsed.svg)await this.saveMapSvg(wid,parsed.svg);
     if(parsed.pack){
       await this.saveMapPack(wid,parsed.pack);
       const topics=generateTopicsFromPack(parsed.pack,wid);
@@ -245,14 +281,11 @@ window.db={
       for(const t of topics){
         const existing=await IDB.get("topic:"+wid+":"+t.aspect_id+":"+t.id);
         if(!existing){await this.saveTopic(t);added++;}
-        else{// Merge
-          const merged={...existing,fields:{...(existing.fields||{}),...(t.fields||{})},tags:normTags([...(existing.tags||[]),...(t.tags||[])])};
-          await this.saveTopic(merged);
-        }
+        else{const merged={...existing,fields:{...(existing.fields||{}),...(t.fields||{})},tags:normTags([...(existing.tags||[]),...(t.tags||[])])};await this.saveTopic(merged);}
       }
-      return{added,total:topics.length,svg:!!parsed.svg};
+      return{added,total:topics.length,svg:!!parsed.svg,debug:parsed.debug};
     }
-    return{added:0,total:0,svg:!!parsed.svg};
+    return{added:0,total:0,svg:!!parsed.svg,debug:parsed.debug,error:"Pack data missing"};
   },
   // Export
   async exportAll(){const data={version:"worldforge-v3",exported:new Date().toISOString(),worlds:[],bibles:[],chats:[],topics:[],generalChats:[],maps:[]};const ws=await this.listWorlds();for(const w of ws){data.worlds.push(w);data.bibles.push({wid:w.id,...(await this.getBible(w.id))});for(const asp of ASPECTS){const cs=await this.listChats(w.id,asp.id);for(const ch of cs){const f=await this.loadChat(w.id,asp.id,ch.id);if(f)data.chats.push(f);}const tps=await this.listTopics(w.id,asp.id);for(const t of tps)data.topics.push(t);}const wgc=await this.listChats(w.id,"__worldchat__");for(const ch of wgc){const f=await this.loadChat(w.id,"__worldchat__",ch.id);if(f)data.chats.push(f);}if(await this.hasMap(w.id))data.maps.push({wid:w.id,hasSvg:true});}const gc=await this.listGeneralChats();for(const ch of gc){const f=await this.loadChat("__general__","__general__",ch.id);if(f)data.generalChats.push(f);}return data;},
@@ -354,7 +387,7 @@ function MapViewer({svgStr,pack,worldId,onSelectEntity,onClose}){
   const handleMouseUp=()=>setDragging(false);
 
   return(<div style={{display:"flex",height:"100%",overflow:"hidden"}}>
-    <div style={{flex:1,position:"relative",overflow:"hidden",background:"#0a0e14",cursor:dragging?"grabbing":"grab"}}
+    <div style={{flex:1,position:"relative",overflow:"hidden",background:"#a8c5d6",cursor:dragging?"grabbing":"grab"}}
       onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
       <div ref={containerRef} className="map-container" onClick={handleSvgClick}
         style={{transform:`translate(${pan.x}px,${pan.y}px) scale(${zoom})`,transformOrigin:"0 0",transition:dragging?"none":"transform 0.1s"}}
@@ -439,13 +472,14 @@ function App(){
   // Map import
   const handleMapFile=async(e)=>{
     const file=e.target.files[0];if(!file||!cW)return;
-    setBusy(true);flash("Parsing map...");
+    setBusy(true);flash("Parsing "+file.name+" ("+Math.round(file.size/1024)+"KB)...");
     try{
       const text=await file.text();
       const result=await db.importAzgaarMap(cW.id,text);
-      if(result.error){flash("Error: "+result.error);}
+      if(result.debug)console.log("WorldForge Map Import Debug:",result.debug);
+      if(result.error){flash("Error: "+result.error);console.error("Map import error:",result.error,result.debug);}
       else{flash("Imported! "+result.added+" topics from "+result.total+" entities");await loadAspCounts(cW.id);}
-    }catch(err){flash("Failed: "+err.message);}
+    }catch(err){flash("Failed: "+err.message);console.error(err);}
     setBusy(false);if(fileRef.current)fileRef.current.value="";
   };
 
@@ -517,7 +551,7 @@ function App(){
     <Modal open={mod?.t==="bible"} title={(cW?.name||"")+" Bible"} onClose={()=>setMod(null)} wide>{bibleData&&Object.keys(bibleData).length>0?<div style={{maxHeight:500,overflowY:"auto"}}>{Object.entries(bibleData).map(([cat,ent])=>(<div key={cat} style={{marginBottom:14}}><div style={{fontSize:14,fontWeight:600,color:T.gold,textTransform:"capitalize"}}>{cat.replace(/-/g,' ')}</div>{Object.entries(ent).map(([k,v])=><div key={k} style={{fontSize:13,color:T.txM,paddingLeft:14}}>{k}: {v}</div>)}</div>))}</div>:<div style={{color:T.txD}}>Empty.</div>}<Btn full v="s" onClick={()=>setMod(null)} style={{marginTop:14}}>Close</Btn></Modal>
     <Modal open={mod?.t==="delAll"} title="Delete Everything?" onClose={()=>setMod(null)}><div style={{display:"flex",gap:8}}><Btn full v="d" onClick={async()=>{setMod(null);await IDB.clear();await ldW();flash("Deleted");goMain();}}>Delete All</Btn><Btn full v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
     <Modal open={mod?.t==="addTag"} title="Add Tag" onClose={()=>setMod(null)}><input autoFocus value={tagInput} onChange={e=>setTagInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&tagInput.trim()){(async()=>{const t={...curTopic,tags:normTags([...(curTopic.tags||[]),tagInput.trim()])};await db.saveTopic(t);setCurTopic(t);setTopicList(await db.listTopics(cW.id,cA.id));setTagInput("");setMod(null);})();}}} placeholder="tag..." style={iS}/>{allTags.length>0&&<div style={{marginTop:10,display:"flex",gap:4,flexWrap:"wrap"}}>{allTags.slice(0,20).map(t=><Tag key={t.tag} label={t.tag} onClick={async()=>{const tp={...curTopic,tags:normTags([...(curTopic.tags||[]),t.tag])};await db.saveTopic(tp);setCurTopic(tp);setTopicList(await db.listTopics(cW.id,cA.id));setMod(null);}}/>)}</div>}<div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={async()=>{if(!tagInput.trim())return;const t={...curTopic,tags:normTags([...(curTopic.tags||[]),tagInput.trim()])};await db.saveTopic(t);setCurTopic(t);setTopicList(await db.listTopics(cW.id,cA.id));setTagInput("");setMod(null);}} disabled={!tagInput.trim()}>Add</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
-    <input ref={fileRef} type="file" accept=".map,.txt" style={{display:"none"}} onChange={handleMapFile}/>
+    <input ref={fileRef} type="file" accept=".map,.svg,.txt,.json" style={{display:"none"}} onChange={handleMapFile}/>
   </div>);
 
   // === SCREENS ===
