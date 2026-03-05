@@ -13,115 +13,263 @@
 body{background:#0a0a0c;color:#e8e4dc;font-family:'Source Sans 3',sans-serif;-webkit-font-smoothing:antialiased}
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#111}::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
 input,textarea,button,select{font-family:inherit}
+.map-container svg{width:100%;height:100%}
+.map-container svg path:hover,.map-container svg circle:hover{opacity:0.8;cursor:pointer}
 </style>
 </head>
 <body><div id="root"></div>
 <script>
 // === IDB ===
 const IDB={_db:null,
-  open(){return new Promise((r,j)=>{if(this._db)return r(this._db);const q=indexedDB.open('worldforge',2);q.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains('kv'))d.createObjectStore('kv');};q.onsuccess=e=>{this._db=e.target.result;r(this._db);};q.onerror=e=>j(e);});},
-  async get(k){const d=await this.open();return new Promise((r,j)=>{const t=d.transaction('kv','readonly').objectStore('kv').get(k);t.onsuccess=()=>r(t.result===undefined?null:t.result);t.onerror=e=>j(e);});},
-  async set(k,v){const d=await this.open();return new Promise((r,j)=>{const t=d.transaction('kv','readwrite').objectStore('kv').put(v,k);t.onsuccess=()=>r(true);t.onerror=e=>j(e);});},
-  async del(k){const d=await this.open();return new Promise((r,j)=>{const t=d.transaction('kv','readwrite').objectStore('kv').delete(k);t.onsuccess=()=>r(true);t.onerror=e=>j(e);});},
-  async list(p){const d=await this.open();return new Promise((r,j)=>{const ks=[];const rng=IDBKeyRange.bound(p,p+'\uffff');const t=d.transaction('kv','readonly').objectStore('kv').openCursor(rng);t.onsuccess=e=>{const c=e.target.result;if(c){ks.push(c.key);c.continue();}else r(ks);};t.onerror=e=>j(e);});},
-  async clear(){const d=await this.open();return new Promise((r,j)=>{const t=d.transaction('kv','readwrite').objectStore('kv').clear();t.onsuccess=()=>r(true);t.onerror=e=>j(e);});}
-};
+open(){return new Promise((r,j)=>{if(this._db)return r(this._db);const q=indexedDB.open('worldforge',2);q.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains('kv'))d.createObjectStore('kv');};q.onsuccess=e=>{this._db=e.target.result;r(this._db);};q.onerror=e=>j(e);});},
+async get(k){const d=await this.open();return new Promise((r,j)=>{const t=d.transaction('kv','readonly').objectStore('kv').get(k);t.onsuccess=()=>r(t.result===undefined?null:t.result);t.onerror=e=>j(e);});},
+async set(k,v){const d=await this.open();return new Promise((r,j)=>{const t=d.transaction('kv','readwrite').objectStore('kv').put(v,k);t.onsuccess=()=>r(true);t.onerror=e=>j(e);});},
+async del(k){const d=await this.open();return new Promise((r,j)=>{const t=d.transaction('kv','readwrite').objectStore('kv').delete(k);t.onsuccess=()=>r(true);t.onerror=e=>j(e);});},
+async list(p){const d=await this.open();return new Promise((r,j)=>{const ks=[];const rng=IDBKeyRange.bound(p,p+'\uffff');const t=d.transaction('kv','readonly').objectStore('kv').openCursor(rng);t.onsuccess=e=>{const c=e.target.result;if(c){ks.push(c.key);c.continue();}else r(ks);};t.onerror=e=>j(e);});},
+async clear(){const d=await this.open();return new Promise((r,j)=>{const t=d.transaction('kv','readwrite').objectStore('kv').clear();t.onsuccess=()=>r(true);t.onerror=e=>j(e);});}};
 
-// === Config ===
+// === Template Config ===
 const TMPL={entity:["characters","organizations"],place:["geography","notable-locations","architecture"],system:["magic-technology","politics","economy","languages","education","healthcare","transportation"],culture:["cultures","religion-beliefs","arts-entertainment","food-cuisine","fashion","calendar-time"],event:["history","military","story-elements","cosmology"],creature:["flora-fauna"]};
 const TMPL_FOR={};Object.entries(TMPL).forEach(([t,ids])=>ids.forEach(id=>TMPL_FOR[id]=t));
-
 const TMPL_FIELDS={
-  entity:{quote:"Ability or defining trait (metaphorical/quotable)",skills:"Skills (list)",equipment:"Equipment or resources (list)",personal:"Personal info: age, birthplace, role/class, race, alignment",history:"Background and history",relationships:"Key relationships (list)"},
-  place:{type:"Type (city, mountain, ruin, etc.)",region:"Region or parent location",features:"Key features (list)",inhabitants:"Inhabitants or culture",significance:"Significance to the world",history:"History"},
-  system:{principle:"Core mechanic or principle",components:"Key components (list)",practitioners:"Who uses it / practitioners",effects:"Effects and applications",limitations:"Limitations or costs",origin:"Origin or history"},
-  culture:{origin:"Origin and roots",practices:"Key practices or expressions (list)",significance:"Significance to society",practitioners:"Notable practitioners or groups",notable_events:"Notable events or milestones (list)"},
-  event:{era:"Date, era, or time period",participants:"Key participants (list)",cause:"Cause or trigger",outcome:"Outcome",impact:"Lasting impact on the world"},
-  creature:{classification:"Classification or type",habitat:"Habitat and range",abilities:"Abilities or properties (list)",behaviour:"Behaviour and temperament",uses:"Uses or significance to society"}
+entity:{quote:"Ability or defining trait",skills:"Skills (list)",equipment:"Equipment or resources (list)",personal:"Personal info",history:"Background and history",relationships:"Key relationships (list)"},
+place:{type:"Type",region:"Region or parent",features:"Key features (list)",inhabitants:"Inhabitants or culture",significance:"Significance",history:"History"},
+system:{principle:"Core mechanic or principle",components:"Key components (list)",practitioners:"Practitioners",effects:"Effects and applications",limitations:"Limitations",origin:"Origin or history"},
+culture:{origin:"Origin and roots",practices:"Key practices (list)",significance:"Significance to society",practitioners:"Notable practitioners",notable_events:"Notable events (list)"},
+event:{era:"Date or era",participants:"Key participants (list)",cause:"Cause or trigger",outcome:"Outcome",impact:"Lasting impact"},
+creature:{classification:"Classification",habitat:"Habitat and range",abilities:"Abilities (list)",behaviour:"Behaviour",uses:"Uses or significance"}
 };
 
 window.ASPECTS=[
-  {id:"characters",name:"Characters",icon:"\u{1f464}",topicType:"character",topicPrompt:"List every character name mentioned"},
-  {id:"cultures",name:"Cultures",icon:"\u{1f3db}\ufe0f",topicType:"entity",topicPrompt:"List every culture or civilization mentioned"},
-  {id:"history",name:"History",icon:"\u{1f4dc}",topicType:"event",topicPrompt:"List every historical event or era mentioned"},
-  {id:"geography",name:"Geography",icon:"\u{1f5fa}\ufe0f",topicType:"location",topicPrompt:"List every location or landmark mentioned"},
-  {id:"magic-technology",name:"Magic / Technology",icon:"\u2728",topicType:"system",topicPrompt:"List every magic system or technology mentioned"},
-  {id:"politics",name:"Politics",icon:"\u2696\ufe0f",topicType:"entity",topicPrompt:"List every political entity mentioned"},
-  {id:"religion-beliefs",name:"Religion & Beliefs",icon:"\u{1f56f}\ufe0f",topicType:"entity",topicPrompt:"List every religion or deity mentioned"},
-  {id:"languages",name:"Languages",icon:"\u{1f524}",topicType:"entity",topicPrompt:"List every language mentioned"},
-  {id:"economy",name:"Economy",icon:"\u{1f4b0}",topicType:"entity",topicPrompt:"List every economic system mentioned"},
-  {id:"story-elements",name:"Story Elements",icon:"\u{1f4d6}",topicType:"entity",topicPrompt:"List every plot thread mentioned"},
-  {id:"cosmology",name:"Cosmology & Creation",icon:"\u{1f30c}",topicType:"entity",topicPrompt:"List every cosmic entity mentioned"},
-  {id:"flora-fauna",name:"Flora & Fauna",icon:"\u{1f33f}",topicType:"entity",topicPrompt:"List every creature or species mentioned"},
-  {id:"organizations",name:"Organizations & Factions",icon:"\u{1f3f4}",topicType:"entity",topicPrompt:"List every faction mentioned"},
-  {id:"calendar-time",name:"Calendar & Time",icon:"\u{1f4c5}",topicType:"entity",topicPrompt:"List every calendar or festival mentioned"},
-  {id:"arts-entertainment",name:"Arts & Entertainment",icon:"\u{1f3ad}",topicType:"entity",topicPrompt:"List every art form mentioned"},
-  {id:"food-cuisine",name:"Food & Cuisine",icon:"\u{1f37d}\ufe0f",topicType:"entity",topicPrompt:"List every dish or tradition mentioned"},
-  {id:"fashion",name:"Fashion & Appearance",icon:"\u{1f458}",topicType:"entity",topicPrompt:"List every clothing style mentioned"},
-  {id:"architecture",name:"Architecture",icon:"\u{1f3f0}",topicType:"entity",topicPrompt:"List every building or style mentioned"},
-  {id:"military",name:"Military & Warfare",icon:"\u2694\ufe0f",topicType:"entity",topicPrompt:"List every army or battle mentioned"},
-  {id:"transportation",name:"Transportation & Trade",icon:"\u{1f6a2}",topicType:"entity",topicPrompt:"List every trade route mentioned"},
-  {id:"education",name:"Education & Knowledge",icon:"\u{1f4da}",topicType:"entity",topicPrompt:"List every school mentioned"},
-  {id:"healthcare",name:"Healthcare & Medicine",icon:"\u{1f3e5}",topicType:"entity",topicPrompt:"List every medical practice mentioned"},
-  {id:"notable-locations",name:"Notable Locations",icon:"\u{1f4cd}",topicType:"location",topicPrompt:"List every named place mentioned"},
+{id:"characters",name:"Characters",icon:"\u{1f464}",topicType:"character",topicPrompt:"List every character name mentioned"},
+{id:"cultures",name:"Cultures",icon:"\u{1f3db}\ufe0f",topicType:"entity",topicPrompt:"List every culture or civilization mentioned"},
+{id:"history",name:"History",icon:"\u{1f4dc}",topicType:"event",topicPrompt:"List every historical event or era mentioned"},
+{id:"geography",name:"Geography",icon:"\u{1f5fa}\ufe0f",topicType:"location",topicPrompt:"List every location or landmark mentioned"},
+{id:"magic-technology",name:"Magic / Technology",icon:"\u2728",topicType:"system",topicPrompt:"List every magic system or technology mentioned"},
+{id:"politics",name:"Politics",icon:"\u2696\ufe0f",topicType:"entity",topicPrompt:"List every political entity mentioned"},
+{id:"religion-beliefs",name:"Religion & Beliefs",icon:"\u{1f56f}\ufe0f",topicType:"entity",topicPrompt:"List every religion or deity mentioned"},
+{id:"languages",name:"Languages",icon:"\u{1f524}",topicType:"entity",topicPrompt:"List every language mentioned"},
+{id:"economy",name:"Economy",icon:"\u{1f4b0}",topicType:"entity",topicPrompt:"List every economic system mentioned"},
+{id:"story-elements",name:"Story Elements",icon:"\u{1f4d6}",topicType:"entity",topicPrompt:"List every plot thread mentioned"},
+{id:"cosmology",name:"Cosmology & Creation",icon:"\u{1f30c}",topicType:"entity",topicPrompt:"List every cosmic entity mentioned"},
+{id:"flora-fauna",name:"Flora & Fauna",icon:"\u{1f33f}",topicType:"entity",topicPrompt:"List every creature or species mentioned"},
+{id:"organizations",name:"Organizations & Factions",icon:"\u{1f3f4}",topicType:"entity",topicPrompt:"List every faction mentioned"},
+{id:"calendar-time",name:"Calendar & Time",icon:"\u{1f4c5}",topicType:"entity",topicPrompt:"List every calendar or festival mentioned"},
+{id:"arts-entertainment",name:"Arts & Entertainment",icon:"\u{1f3ad}",topicType:"entity",topicPrompt:"List every art form mentioned"},
+{id:"food-cuisine",name:"Food & Cuisine",icon:"\u{1f37d}\ufe0f",topicType:"entity",topicPrompt:"List every dish or tradition mentioned"},
+{id:"fashion",name:"Fashion & Appearance",icon:"\u{1f458}",topicType:"entity",topicPrompt:"List every clothing style mentioned"},
+{id:"architecture",name:"Architecture",icon:"\u{1f3f0}",topicType:"entity",topicPrompt:"List every building or style mentioned"},
+{id:"military",name:"Military & Warfare",icon:"\u2694\ufe0f",topicType:"entity",topicPrompt:"List every army or battle mentioned"},
+{id:"transportation",name:"Transportation & Trade",icon:"\u{1f6a2}",topicType:"entity",topicPrompt:"List every trade route mentioned"},
+{id:"education",name:"Education & Knowledge",icon:"\u{1f4da}",topicType:"entity",topicPrompt:"List every school mentioned"},
+{id:"healthcare",name:"Healthcare & Medicine",icon:"\u{1f3e5}",topicType:"entity",topicPrompt:"List every medical practice mentioned"},
+{id:"notable-locations",name:"Notable Locations",icon:"\u{1f4cd}",topicType:"location",topicPrompt:"List every named place mentioned"},
 ];
 window.MAX_WORLDS=10;
 
 function normTag(t){return t.toLowerCase().trim().replace(/\s+/g,'-').replace(/[^a-z0-9\-]/g,'');}
 function normTags(arr){return[...new Set((arr||[]).map(normTag).filter(t=>t.length>0))];}
+function mkId(){return Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,6);}
+
+// === Azgaar Map Parser ===
+window.parseAzgaarMap=function(text){
+  const result={svg:null,pack:null,params:null,error:null};
+  try{
+    // Find SVG
+    const svgStart=text.indexOf('<svg');
+    const svgEnd=text.indexOf('</svg>');
+    if(svgStart<0||svgEnd<0){result.error="No SVG found in map file";return result;}
+    result.svg=text.substring(svgStart,svgEnd+6);
+    // Parse pack JSON - first { after </svg>
+    const afterSvg=text.substring(svgEnd+7);
+    let depth=0,start=-1,found=null;
+    for(let i=0;i<afterSvg.length;i++){
+      if(afterSvg[i]==='{'){if(depth===0)start=i;depth++;}
+      if(afterSvg[i]==='}'){depth--;if(depth===0&&start>=0){found=afterSvg.substring(start,i+1);break;}}
+    }
+    if(found)result.pack=JSON.parse(found);
+    else result.error="Could not extract pack data";
+    // Parse params from before SVG
+    const beforeSvg=text.substring(0,svgStart);
+    const paramLines=beforeSvg.split('\n').filter(l=>l.trim());
+    if(paramLines.length>0){
+      try{result.params=JSON.parse(paramLines[0]);}catch(e){}
+    }
+  }catch(e){result.error="Parse error: "+e.message;}
+  return result;
+};
+
+// Generate WorldForge topics from Azgaar pack data
+window.generateTopicsFromPack=function(pack,worldId){
+  const topics=[];
+  if(!pack)return topics;
+  const stateNames={},cultureNames={},religionNames={};
+  // Index names for cross-referencing
+  (pack.states||[]).forEach(s=>{if(s.i>0)stateNames[s.i]=s.name||s.fullName||("State "+s.i);});
+  (pack.cultures||[]).forEach(c=>{if(c.i>0)cultureNames[c.i]=c.name||("Culture "+c.i);});
+  (pack.religions||[]).forEach(r=>{if(r.i>0)religionNames[r.i]=r.name||("Religion "+r.i);});
+
+  // States -> politics
+  (pack.states||[]).forEach(s=>{
+    if(!s.i||s.i===0||s.removed)return;
+    const cap=pack.burgs&&s.capital?pack.burgs[s.capital]:null;
+    const culture=s.culture?cultureNames[s.culture]:"Unknown";
+    const tags=normTags([s.form||"",culture,"state",s.name]);
+    topics.push({id:"azg-state-"+s.i,name:s.name||s.fullName,brief:(s.fullName||s.name)+", a "+( s.form||"state")+" of the "+culture+" culture",
+      template:"system",tags,aspect_id:"politics",world_id:worldId,source:"azgaar",azgaar_id:s.i,azgaar_type:"state",
+      fields:{principle:"Form of government: "+(s.form||"Unknown"),components:["Area: "+(s.area?Math.round(s.area)+" cells":"Unknown"),"Population: "+(s.rural||0)+"/"+(s.urban||0)+" (rural/urban)"],
+        practitioners:"Dominant culture: "+culture,effects:"Capital: "+(cap?cap.name:"Unknown"),limitations:"",origin:""},
+      created:new Date().toISOString(),updated:new Date().toISOString()});
+  });
+
+  // Burgs -> notable-locations
+  (pack.burgs||[]).forEach(b=>{
+    if(!b.i||b.i===0||!b.name)return;
+    const state=b.state?stateNames[b.state]:"Unclaimed";
+    const culture=b.culture?cultureNames[b.culture]:"Unknown";
+    const religion=b.religion?religionNames[b.religion]:"Unknown";
+    const features=[];
+    if(b.capital)features.push("Capital city");
+    if(b.port)features.push("Port");
+    if(b.citadel)features.push("Citadel");
+    if(b.walls)features.push("Walled");
+    if(b.plaza)features.push("Market plaza");
+    if(b.temple)features.push("Temple");
+    if(b.shanty)features.push("Shantytown");
+    const tags=normTags([state,culture,religion,...features,b.name]);
+    topics.push({id:"azg-burg-"+b.i,name:b.name,brief:b.name+(b.capital?" (capital)":"")+", "+state,
+      template:"place",tags,aspect_id:"notable-locations",world_id:worldId,source:"azgaar",azgaar_id:b.i,azgaar_type:"burg",
+      fields:{type:features.length?features.join(", "):"Settlement",region:state,
+        features:features.length?features:["Settlement"],inhabitants:"Culture: "+culture+", Religion: "+religion,
+        significance:b.capital?"Capital of "+state:"Settlement in "+state,
+        history:"Population: "+(b.population?Math.round(b.population*1000):"Unknown")},
+      created:new Date().toISOString(),updated:new Date().toISOString()});
+  });
+
+  // Cultures -> cultures
+  (pack.cultures||[]).forEach(c=>{
+    if(!c.i||c.i===0||c.removed)return;
+    const tags=normTags([c.type||"",c.name,"culture"]);
+    topics.push({id:"azg-culture-"+c.i,name:c.name,brief:c.name+", a "+(c.type||"")+" culture",
+      template:"culture",tags,aspect_id:"cultures",world_id:worldId,source:"azgaar",azgaar_id:c.i,azgaar_type:"culture",
+      fields:{origin:"Type: "+(c.type||"Unknown")+(c.base!==undefined?", Base: "+c.base:""),
+        practices:["Naming convention: "+(c.namingMethod||"default")],
+        significance:"",practitioners:"",notable_events:[]},
+      created:new Date().toISOString(),updated:new Date().toISOString()});
+  });
+
+  // Religions -> religion-beliefs
+  (pack.religions||[]).forEach(r=>{
+    if(!r.i||r.i===0||r.removed)return;
+    const tags=normTags([r.type||"",r.form||"",r.name,"religion"]);
+    topics.push({id:"azg-religion-"+r.i,name:r.name,brief:r.name+", "+(r.form||"a")+" "+(r.type||"religion"),
+      template:"culture",tags,aspect_id:"religion-beliefs",world_id:worldId,source:"azgaar",azgaar_id:r.i,azgaar_type:"religion",
+      fields:{origin:"Type: "+(r.type||"Unknown")+", Form: "+(r.form||"Unknown"),
+        practices:[r.deity?"Deity: "+r.deity:"No central deity"],
+        significance:"",practitioners:"",notable_events:[]},
+      created:new Date().toISOString(),updated:new Date().toISOString()});
+  });
+
+  // Rivers -> geography
+  (pack.rivers||[]).forEach(rv=>{
+    if(!rv.i||!rv.name)return;
+    const tags=normTags([rv.type||"river",rv.name,"geography","river"]);
+    topics.push({id:"azg-river-"+rv.i,name:rv.name+(rv.type&&rv.type!=="River"?" ("+rv.type+")":""),
+      brief:rv.name+", "+(rv.type||"river"),
+      template:"place",tags,aspect_id:"geography",world_id:worldId,source:"azgaar",azgaar_id:rv.i,azgaar_type:"river",
+      fields:{type:rv.type||"River",region:"",
+        features:["Length: "+(rv.length?Math.round(rv.length):"Unknown"),"Basin: "+(rv.basin||"Unknown")],
+        inhabitants:"",significance:"",history:""},
+      created:new Date().toISOString(),updated:new Date().toISOString()});
+  });
+
+  // Military -> military (aggregate by state)
+  if(pack.military&&pack.military.length){
+    pack.military.forEach((m,idx)=>{
+      if(!m||!m.length||idx===0)return;
+      const sn=stateNames[idx]||("State "+idx);
+      const regiments=m.map(r=>r.name+" ("+r.type+": "+(r.n||0)+")");
+      const tags=normTags([sn,"military","army"]);
+      topics.push({id:"azg-military-"+idx,name:sn+" Armed Forces",
+        brief:"Military forces of "+sn,template:"event",tags,aspect_id:"military",world_id:worldId,
+        source:"azgaar",azgaar_id:idx,azgaar_type:"military",
+        fields:{era:"Current",participants:regiments.slice(0,10),cause:"Standing military of "+sn,
+          outcome:"Total regiments: "+m.length,impact:""},
+        created:new Date().toISOString(),updated:new Date().toISOString()});
+    });
+  }
+
+  return topics;
+};
 
 // === Data Layer ===
 window.db={
   async listWorlds(){const ks=await IDB.list("world:");const ws=[];for(const k of ks){const w=await IDB.get(k);if(w)ws.push(w);}ws.sort((a,b)=>(a.created||"").localeCompare(b.created||""));return ws;},
   async createWorld(n,desc){const id=n.toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,40)+'-'+Math.random().toString(36).slice(2,8);const m={id,name:n,description:desc||"",created:new Date().toISOString(),updated:new Date().toISOString()};await IDB.set("world:"+id,m);await IDB.set("bible:"+id,{world_id:id,world_name:n,last_updated:new Date().toISOString(),facts:{}});return m;},
   async saveWorld(w){w.updated=new Date().toISOString();return IDB.set("world:"+w.id,w);},
-  async deleteWorld(wid){await IDB.del("world:"+wid);await IDB.del("bible:"+wid);const ck=await IDB.list("chat:"+wid+":");for(const k of ck)await IDB.del(k);const tk=await IDB.list("topic:"+wid+":");for(const k of tk)await IDB.del(k);},
+  async deleteWorld(wid){await IDB.del("world:"+wid);await IDB.del("bible:"+wid);await IDB.del("mapsvg:"+wid);await IDB.del("mappack:"+wid);const ck=await IDB.list("chat:"+wid+":");for(const k of ck)await IDB.del(k);const tk=await IDB.list("topic:"+wid+":");for(const k of tk)await IDB.del(k);},
   async getBible(wid){return(await IDB.get("bible:"+wid))||{facts:{}};},
   async saveBible(wid,b){b.last_updated=new Date().toISOString();return IDB.set("bible:"+wid,b);},
   async addFact(wid,cat,key,val){const b=await this.getBible(wid);if(!b.facts)b.facts={};if(!b.facts[cat])b.facts[cat]={};b.facts[cat][key]=val;return this.saveBible(wid,b);},
   async listChats(wid,aid){const ks=await IDB.list("chat:"+wid+":"+aid+":");const cs=[];for(const k of ks){const c=await IDB.get(k);if(c)cs.push(c);}cs.sort((a,b)=>(b.updated||"").localeCompare(a.updated||""));return cs;},
-  async createChat(wid,aid,title){const id=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,6);const ch={id,world_id:wid,aspect_id:aid,title:title||("Chat "+new Date().toLocaleString()),created:new Date().toISOString(),updated:new Date().toISOString(),messages:[]};await IDB.set("chat:"+wid+":"+aid+":"+id,ch);return ch;},
+  async createChat(wid,aid,title){const id=mkId();const ch={id,world_id:wid,aspect_id:aid,title:title||("Chat "+new Date().toLocaleString()),created:new Date().toISOString(),updated:new Date().toISOString(),messages:[]};await IDB.set("chat:"+wid+":"+aid+":"+id,ch);return ch;},
   async saveChat(c){c.updated=new Date().toISOString();return IDB.set("chat:"+c.world_id+":"+c.aspect_id+":"+c.id,c);},
   async loadChat(wid,aid,cid){return IDB.get("chat:"+wid+":"+aid+":"+cid);},
   async listGeneralChats(){const ks=await IDB.list("chat:__general__:__general__:");const cs=[];for(const k of ks){const c=await IDB.get(k);if(c)cs.push(c);}cs.sort((a,b)=>(b.updated||"").localeCompare(a.updated||""));return cs;},
   async createGeneralChat(t){return this.createChat("__general__","__general__",t);},
   async fileNote(wid,aid,text){const chats=await this.listChats(wid,aid);let tgt=chats.find(c=>c.title==="Cross-World Notes");if(tgt)tgt=await this.loadChat(wid,aid,tgt.id);if(!tgt)tgt=await this.createChat(wid,aid,"Cross-World Notes");tgt.messages.push({role:"user",content:text,timestamp:new Date().toISOString(),source:"cross-world"});await this.saveChat(tgt);},
   async gatherAspectText(wid,aid){const chats=await this.listChats(wid,aid);const ts=[];for(const ch of chats){const f=await this.loadChat(wid,aid,ch.id);if(f)for(const m of f.messages||[])ts.push(m.content||"");}return ts.join("\n\n");},
-  // === Topics ===
+  // Topics
   async saveTopic(t){t.updated=new Date().toISOString();t.tags=normTags(t.tags);await IDB.set("topic:"+t.world_id+":"+t.aspect_id+":"+t.id,t);return t;},
   async listTopics(wid,aid){const ks=await IDB.list("topic:"+wid+":"+aid+":");const ts=[];for(const k of ks){const t=await IDB.get(k);if(t)ts.push(t);}ts.sort((a,b)=>(a.name||"").localeCompare(b.name||""));return ts;},
   async loadTopic(wid,aid,tid){return IDB.get("topic:"+wid+":"+aid+":"+tid);},
   async deleteTopic(wid,aid,tid){return IDB.del("topic:"+wid+":"+aid+":"+tid);},
-  async listAllTags(wid){const ks=await IDB.list("topic:"+wid+":");const tags={};for(const k of ks){const t=await IDB.get(k);if(t&&t.tags)for(const tg of t.tags){tags[tg]=(tags[tg]||0)+1;}}return Object.entries(tags).sort((a,b)=>b[1]-a[1]).map(([t,c])=>({tag:t,count:c}));},
-  async searchByTag(wid,tag){const ks=await IDB.list("topic:"+wid+":");const results=[];for(const k of ks){const t=await IDB.get(k);if(t&&t.tags&&t.tags.includes(normTag(tag)))results.push(t);}return results;},
+  async listAllTags(wid){const ks=await IDB.list("topic:"+wid+":");const tags={};for(const k of ks){const t=await IDB.get(k);if(t&&t.tags)for(const tg of t.tags)tags[tg]=(tags[tg]||0)+1;}return Object.entries(tags).sort((a,b)=>b[1]-a[1]).map(([t,c])=>({tag:t,count:c}));},
+  async searchByTag(wid,tag){const ks=await IDB.list("topic:"+wid+":");const r=[];for(const k of ks){const t=await IDB.get(k);if(t&&t.tags&&t.tags.includes(normTag(tag)))r.push(t);}return r;},
   async getWorldSummary(wid){const b=await this.getBible(wid);const f=b.facts||{};const p=[];for(const[c,e] of Object.entries(f)){const k=Object.keys(e).slice(0,3);if(k.length)p.push(c.replace(/-/g,' ')+": "+k.join(", "));}return p.slice(0,4).join(". ")||"New world";},
-  // === Export/Import ===
-  async exportAll(){const data={version:"worldforge-v3",exported:new Date().toISOString(),worlds:[],bibles:[],chats:[],topics:[],generalChats:[]};const ws=await this.listWorlds();for(const w of ws){data.worlds.push(w);data.bibles.push({wid:w.id,...(await this.getBible(w.id))});for(const asp of ASPECTS){const cs=await this.listChats(w.id,asp.id);for(const ch of cs){const f=await this.loadChat(w.id,asp.id,ch.id);if(f)data.chats.push(f);}const tps=await this.listTopics(w.id,asp.id);for(const t of tps)data.topics.push(t);}const wgc=await this.listChats(w.id,"__worldchat__");for(const ch of wgc){const f=await this.loadChat(w.id,"__worldchat__",ch.id);if(f)data.chats.push(f);}}const gc=await this.listGeneralChats();for(const ch of gc){const f=await this.loadChat("__general__","__general__",ch.id);if(f)data.generalChats.push(f);}return data;},
+  // Map
+  async saveMapSvg(wid,svg){return IDB.set("mapsvg:"+wid,svg);},
+  async getMapSvg(wid){return IDB.get("mapsvg:"+wid);},
+  async saveMapPack(wid,pack){return IDB.set("mappack:"+wid,pack);},
+  async getMapPack(wid){return IDB.get("mappack:"+wid);},
+  async hasMap(wid){return!!(await IDB.get("mapsvg:"+wid));},
+  // Import map and generate all topics
+  async importAzgaarMap(wid,fileText){
+    const parsed=parseAzgaarMap(fileText);
+    if(parsed.error)return{error:parsed.error};
+    await this.saveMapSvg(wid,parsed.svg);
+    if(parsed.pack){
+      await this.saveMapPack(wid,parsed.pack);
+      const topics=generateTopicsFromPack(parsed.pack,wid);
+      let added=0;
+      for(const t of topics){
+        const existing=await IDB.get("topic:"+wid+":"+t.aspect_id+":"+t.id);
+        if(!existing){await this.saveTopic(t);added++;}
+        else{// Merge
+          const merged={...existing,fields:{...(existing.fields||{}),...(t.fields||{})},tags:normTags([...(existing.tags||[]),...(t.tags||[])])};
+          await this.saveTopic(merged);
+        }
+      }
+      return{added,total:topics.length,svg:!!parsed.svg};
+    }
+    return{added:0,total:0,svg:!!parsed.svg};
+  },
+  // Export
+  async exportAll(){const data={version:"worldforge-v3",exported:new Date().toISOString(),worlds:[],bibles:[],chats:[],topics:[],generalChats:[],maps:[]};const ws=await this.listWorlds();for(const w of ws){data.worlds.push(w);data.bibles.push({wid:w.id,...(await this.getBible(w.id))});for(const asp of ASPECTS){const cs=await this.listChats(w.id,asp.id);for(const ch of cs){const f=await this.loadChat(w.id,asp.id,ch.id);if(f)data.chats.push(f);}const tps=await this.listTopics(w.id,asp.id);for(const t of tps)data.topics.push(t);}const wgc=await this.listChats(w.id,"__worldchat__");for(const ch of wgc){const f=await this.loadChat(w.id,"__worldchat__",ch.id);if(f)data.chats.push(f);}if(await this.hasMap(w.id))data.maps.push({wid:w.id,hasSvg:true});}const gc=await this.listGeneralChats();for(const ch of gc){const f=await this.loadChat("__general__","__general__",ch.id);if(f)data.generalChats.push(f);}return data;},
   async importAll(data){let ct={worlds:0,chats:0,topics:0};for(const w of data.worlds||[]){await IDB.set("world:"+w.id,w);ct.worlds++;}for(const b of data.bibles||[]){const wid=b.wid||b.world_id;if(wid)await IDB.set("bible:"+wid,b);}for(const c of data.chats||[]){await IDB.set("chat:"+c.world_id+":"+c.aspect_id+":"+c.id,c);ct.chats++;}for(const c of data.generalChats||[]){await IDB.set("chat:__general__:__general__:"+c.id,c);ct.chats++;}for(const t of data.topics||[]){await IDB.set("topic:"+t.world_id+":"+t.aspect_id+":"+t.id,t);ct.topics++;}return ct;},
   async getApiKey(){return IDB.get("_apikey");},async setApiKey(k){return IDB.set("_apikey",k);},
 };
 
 // === AI ===
-window.aiCall=async function(system,messages,maxTokens){
-  maxTokens=maxTokens||1500;const key=await db.getApiKey();
-  if(!key)return"[No API key. Settings > API key.]";
-  try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,system,messages:messages.map(m=>({role:m.role,content:m.content}))})});
-  if(!r.ok){const e=await r.json().catch(()=>({}));return"API error "+r.status+": "+(e.error?.message||r.statusText);}
-  const data=await r.json();return data.content?.map(b=>b.text||"").join("")||"No response.";}catch(e){return"Network error: "+e.message;}
-};
+window.aiCall=async function(sys,msgs,mt){mt=mt||1500;const key=await db.getApiKey();if(!key)return"[No API key.]";
+try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:mt,system:sys,messages:msgs.map(m=>({role:m.role,content:m.content}))})});
+if(!r.ok){const e=await r.json().catch(()=>({}));return"API error "+r.status+": "+(e.error?.message||r.statusText);}
+const d=await r.json();return d.content?.map(b=>b.text||"").join("")||"No response.";}catch(e){return"Error: "+e.message;}};
 
-// === Topic extraction prompts per template ===
-window.buildExtractPrompt=function(aspect,tmpl){
-  const fields=TMPL_FIELDS[tmpl];
-  const fieldList=Object.entries(fields).map(([k,v])=>'  "'+k+'": "'+v+'"').join(",\n");
-  return 'You are a precise data extractor for worldbuilding. Analyse the conversation text and '+aspect.topicPrompt+'.\n\nFor EACH entity found, return a JSON object with:\n- "name": the entity name\n- "brief": 1-sentence summary\n- "tags": array of 2-5 lowercase tags for searchability\n- "fields": an object with these keys:\n'+fieldList+'\n\nReturn ONLY a JSON array. No markdown, no preamble. Use "Unknown" for fields without info.\nExample: [{"name":"...","brief":"...","tags":["tag1","tag2"],"fields":{...}}]';
-};
-
-window.buildCardPrompt=function(name,tmpl,worldName){
-  const fields=TMPL_FIELDS[tmpl];
-  const fieldList=Object.entries(fields).map(([k,v])=>'  "'+k+'": "'+v+'"').join(",\n");
-  return 'Generate a detailed card for "'+name+'" in the world "'+worldName+'".\nUse ONLY information from the conversations and bible below. For unknowns write "Unknown".\n\nReturn ONLY a JSON object:\n{\n  "name": "'+name+'",\n  "brief": "1-sentence summary",\n  "tags": ["tag1","tag2","tag3"],\n  "fields": {\n'+fieldList+'\n  }\n}\n\nNo markdown. No preamble. Valid JSON only.';
-};
+window.buildExtractPrompt=function(aspect,tmpl){const fields=TMPL_FIELDS[tmpl];const fl=Object.entries(fields).map(([k,v])=>'  "'+k+'": "'+v+'"').join(",\n");
+return'Extract worldbuilding entities. '+aspect.topicPrompt+'.\nFor EACH, return JSON:\n- "name","brief","tags" (2-5 lowercase),"fields":{'+fl+'}\nReturn ONLY a JSON array. "Unknown" for missing fields.';};
+window.buildCardPrompt=function(name,tmpl,wn){const fields=TMPL_FIELDS[tmpl];const fl=Object.entries(fields).map(([k,v])=>'  "'+k+'": "'+v+'"').join(",\n");
+return'Generate a detailed card for "'+name+'" in "'+wn+'". Use ONLY conversation/bible data.\nReturn JSON: {"name","brief","tags":[...],"fields":{'+fl+'}}\nNo markdown.';};
 
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
 </script>
@@ -129,117 +277,130 @@ if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch
 <script type="text/babel" data-type="module">
 const {useState,useEffect,useCallback,useRef}=React;
 const ASPECTS=window.ASPECTS,MAX_WORLDS=window.MAX_WORLDS,db=window.db,aiCall=window.aiCall;
-const TMPL_FOR=window.TMPL_FOR||{};const TMPL_FIELDS=window.TMPL_FIELDS||{};
-
-const T={bg:"#0a0a0c",sf:"#141418",sf2:"#1a1a20",sfH:"#222228",card:"#16161c",
-  bd:"#2a2a32",bdL:"#3a3a44",gold:"#c8a24e",goldD:"#8a7030",goldB:"#e8c25e",
-  tx:"#e8e4dc",txD:"#7a7670",txM:"#b8b4ac",red:"#8a3a3a",redTx:"#d46a6a",
-  accent:"#3a6a5a",accentB:"#4a8a6a"};
+const TMPL_FOR=window.TMPL_FOR||{},TMPL_FIELDS=window.TMPL_FIELDS||{};
+const T={bg:"#0a0a0c",sf:"#141418",sf2:"#1a1a20",sfH:"#222228",card:"#16161c",bd:"#2a2a32",bdL:"#3a3a44",gold:"#c8a24e",goldD:"#8a7030",goldB:"#e8c25e",tx:"#e8e4dc",txD:"#7a7670",txM:"#b8b4ac",red:"#8a3a3a",redTx:"#d46a6a",accent:"#3a6a5a"};
 const iS={width:"100%",padding:"10px 14px",borderRadius:8,border:"1px solid "+T.bd,background:T.bg,color:T.tx,fontSize:14,fontFamily:"inherit",outline:"none"};
 
-// === Shared UI ===
 function Modal({open,title,children,onClose,wide}){if(!open)return null;return(<div style={{position:"fixed",inset:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}><div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.7)"}}/><div style={{position:"relative",background:T.sf,border:"1px solid "+T.bd,borderRadius:12,padding:24,width:"100%",maxWidth:wide?700:420,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>{title&&<div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,marginBottom:16}}>{title}</div>}{children}</div></div>);}
-
-function Btn({children,onClick,v="p",full,sm,disabled,style:s}){const m={p:{background:T.gold,color:T.bg,fontWeight:600},s:{background:T.sf2,color:T.tx,border:"1px solid "+T.bd},g:{background:"none",color:T.gold},d:{background:T.red,color:"#fff"},a:{background:T.accent,color:T.tx,fontWeight:500}};return(<button onClick={onClick} disabled={disabled} style={{...m[v],border:m[v].border||"none",padding:sm?"5px 12px":"10px 20px",borderRadius:8,fontSize:sm?12:14,cursor:disabled?"default":"pointer",width:full?"100%":"auto",fontFamily:"inherit",opacity:disabled?0.4:1,...s}}>{children}</button>);}
-
-function Tag({label,onClick,active,removable,onRemove}){return(<span onClick={onClick} style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:500,cursor:onClick?"pointer":"default",background:active?T.gold+"33":T.sf2,color:active?T.gold:T.txM,border:"1px solid "+(active?T.gold+"55":T.bd),transition:"all .15s"}}>{label}{removable&&<span onClick={e=>{e.stopPropagation();onRemove();}} style={{cursor:"pointer",marginLeft:2,opacity:.6}}>{"×"}</span>}</span>);}
-
+function Btn({children,onClick,v="p",full,sm,disabled,style:s}){const m={p:{background:T.gold,color:T.bg,fontWeight:600},s:{background:T.sf2,color:T.tx,border:"1px solid "+T.bd},g:{background:"none",color:T.gold},d:{background:T.red,color:"#fff"},a:{background:T.accent,color:T.tx}};return(<button onClick={onClick} disabled={disabled} style={{...m[v],border:m[v].border||"none",padding:sm?"5px 12px":"10px 20px",borderRadius:8,fontSize:sm?12:14,cursor:disabled?"default":"pointer",width:full?"100%":"auto",fontFamily:"inherit",opacity:disabled?0.4:1,...s}}>{children}</button>);}
+function Tag({label,onClick,active}){return(<span onClick={onClick} style={{display:"inline-block",padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:500,cursor:onClick?"pointer":"default",background:active?T.gold+"33":T.sf2,color:active?T.gold:T.txM,border:"1px solid "+(active?T.gold+"55":T.bd)}}>{label}</span>);}
 function Bub({msg}){const u=msg.role==="user";return(<div style={{display:"flex",justifyContent:u?"flex-end":"flex-start",padding:"4px 0",maxWidth:700}}><div style={{maxWidth:"75%",padding:"10px 16px",borderRadius:u?"14px 14px 4px 14px":"14px 14px 14px 4px",background:u?T.gold+"1a":T.sf2,border:"1px solid "+(u?T.gold+"33":T.bd),fontSize:14,lineHeight:1.6,whiteSpace:"pre-wrap",wordBreak:"break-word",color:T.tx}}>{msg.content}{msg._filed&&msg._filed.length>0&&<div style={{fontSize:11,color:T.goldD,marginTop:6,borderTop:"1px solid "+T.bd,paddingTop:4}}>{msg._filed.map((f,i)=><div key={i}>{"📁 → "+f}</div>)}</div>}</div></div>);}
 
-// === CARD TEMPLATES ===
+// === Card Templates ===
 function CardView({topic}){
-  if(!topic||!topic.fields)return null;
-  const tmpl=topic.template||"entity";
-  const f=topic.fields;
-  const renderField=(label,val)=>{
-    if(!val||val==="Unknown")return null;
-    const isList=Array.isArray(val);
-    return(<div style={{marginBottom:10}}><div style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:T.goldD,marginBottom:3}}>{label}</div>{isList?<div>{val.map((v,i)=><div key={i} style={{fontSize:13,color:T.txM,paddingLeft:8}}>{"• "+v}</div>)}</div>:<div style={{fontSize:13,color:T.txM,lineHeight:1.5}}>{val}</div>}</div>);
-  };
-  const parseList=(v)=>typeof v==='string'?v.split(/[,;]/).map(s=>s.trim()).filter(Boolean):Array.isArray(v)?v:[v];
+  if(!topic||!topic.fields)return null;const tmpl=topic.template||"entity";const f=topic.fields;
+  const rF=(label,val)=>{if(!val||val==="Unknown")return null;const isList=Array.isArray(val);
+    return(<div style={{marginBottom:10}}><div style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:T.goldD,marginBottom:3}}>{label}</div>{isList?<div>{val.map((v,i)=><div key={i} style={{fontSize:13,color:T.txM,paddingLeft:8}}>{"• "+v}</div>)}</div>:<div style={{fontSize:13,color:T.txM,lineHeight:1.5}}>{val}</div>}</div>);};
+  const pL=(v)=>typeof v==='string'?v.split(/[,;]/).map(s=>s.trim()).filter(Boolean):Array.isArray(v)?v:[v];
+  const box=(label,val)=>(!val||val==="Unknown")?null:<div style={{padding:"14px 16px",background:T.bg,borderRadius:8,border:"1px solid "+T.bd,marginBottom:12}}><div style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:T.goldD,marginBottom:8}}>{label}</div><div style={{fontSize:13,color:T.txM,lineHeight:1.6}}>{val}</div></div>;
+  const quote=(val)=>(!val||val==="Unknown")?null:<div style={{fontSize:15,fontStyle:"italic",color:T.goldB,padding:"10px 16px",background:T.gold+"0d",borderLeft:"3px solid "+T.gold,borderRadius:4,marginBottom:16}}>{'"'+val+'"'}</div>;
 
-  // All templates share outer frame
-  return(
-    <div style={{background:T.sf,border:"2px solid "+T.bd,borderRadius:12,overflow:"hidden"}}>
-      {/* Header */}
-      <div style={{padding:"20px 24px 16px",borderBottom:"1px solid "+T.bd}}>
-        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold}}>{topic.name}</div>
-        {topic.brief&&<div style={{fontSize:13,color:T.txM,marginTop:4,fontStyle:"italic"}}>{topic.brief}</div>}
-        {topic.tags&&topic.tags.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>{topic.tags.map(t=><Tag key={t} label={t}/>)}</div>}
-      </div>
-      {/* Body - two column layout */}
-      <div style={{display:"flex",minHeight:300}}>
-        {/* Left: image placeholder */}
-        <div style={{width:280,flexShrink:0,background:T.bg,borderRight:"1px solid "+T.bd,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:T.txD,padding:20,textAlign:"center"}}>
-          <div><div style={{fontSize:48,marginBottom:12,opacity:.3}}>{tmpl==="entity"?"👤":tmpl==="place"?"🗺️":tmpl==="system"?"⚙️":tmpl==="culture"?"🎭":tmpl==="event"?"📜":"🌿"}</div>Image placeholder</div>
-        </div>
-        {/* Right: fields */}
-        <div style={{flex:1,padding:"20px 24px",overflowY:"auto"}}>
-          {tmpl==="entity"&&<>
-            {f.quote&&f.quote!=="Unknown"&&<div style={{fontSize:15,fontStyle:"italic",color:T.goldB,padding:"10px 16px",background:T.gold+"0d",borderLeft:"3px solid "+T.gold,borderRadius:4,marginBottom:16}}>{'"'+f.quote+'"'}</div>}
-            <div style={{display:"flex",gap:16,marginBottom:12}}>
-              <div style={{flex:1}}>{renderField("Skills",parseList(f.skills))}</div>
-              <div style={{flex:1}}>{renderField("Equipment",parseList(f.equipment))}</div>
-            </div>
-            <div style={{padding:"14px 16px",background:T.bg,borderRadius:8,border:"1px solid "+T.bd,marginBottom:12}}>
-              <div style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:T.goldD,marginBottom:8}}>Personal Information</div>
-              <div style={{fontSize:13,color:T.txM,lineHeight:1.6}}>{f.personal||"Unknown"}</div>
-            </div>
-            <div style={{padding:"14px 16px",background:T.bg,borderRadius:8,border:"1px solid "+T.bd,marginBottom:12}}>
-              <div style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:T.goldD,marginBottom:8}}>History</div>
-              <div style={{fontSize:13,color:T.txM,lineHeight:1.6}}>{f.history||"Unknown"}</div>
-            </div>
-            {renderField("Relationships",parseList(f.relationships))}
-          </>}
-          {tmpl==="place"&&<>
-            <div style={{display:"flex",gap:16,marginBottom:12}}>
-              <div style={{flex:1}}>{renderField("Type",f.type)}</div>
-              <div style={{flex:1}}>{renderField("Region",f.region)}</div>
-            </div>
-            {renderField("Key Features",parseList(f.features))}
-            {renderField("Inhabitants",f.inhabitants)}
-            <div style={{padding:"14px 16px",background:T.bg,borderRadius:8,border:"1px solid "+T.bd,marginBottom:12}}><div style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:T.goldD,marginBottom:8}}>Significance</div><div style={{fontSize:13,color:T.txM,lineHeight:1.6}}>{f.significance||"Unknown"}</div></div>
-            <div style={{padding:"14px 16px",background:T.bg,borderRadius:8,border:"1px solid "+T.bd}}><div style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:T.goldD,marginBottom:8}}>History</div><div style={{fontSize:13,color:T.txM,lineHeight:1.6}}>{f.history||"Unknown"}</div></div>
-          </>}
-          {tmpl==="system"&&<>
-            {f.principle&&f.principle!=="Unknown"&&<div style={{fontSize:14,color:T.goldB,padding:"10px 16px",background:T.gold+"0d",borderLeft:"3px solid "+T.gold,borderRadius:4,marginBottom:16}}>{f.principle}</div>}
-            {renderField("Components",parseList(f.components))}
-            <div style={{display:"flex",gap:16,marginBottom:12}}>
-              <div style={{flex:1}}>{renderField("Practitioners",f.practitioners)}</div>
-              <div style={{flex:1}}>{renderField("Effects",f.effects)}</div>
-            </div>
-            {renderField("Limitations",f.limitations)}
-            <div style={{padding:"14px 16px",background:T.bg,borderRadius:8,border:"1px solid "+T.bd}}><div style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:T.goldD,marginBottom:8}}>Origin</div><div style={{fontSize:13,color:T.txM,lineHeight:1.6}}>{f.origin||"Unknown"}</div></div>
-          </>}
-          {tmpl==="culture"&&<>
-            {renderField("Origin",f.origin)}
-            {renderField("Key Practices",parseList(f.practices))}
-            {renderField("Significance",f.significance)}
-            {renderField("Notable Practitioners",f.practitioners)}
-            {renderField("Notable Events",parseList(f.notable_events))}
-          </>}
-          {tmpl==="event"&&<>
-            <div style={{display:"flex",gap:16,marginBottom:12}}>
-              <div style={{flex:1}}>{renderField("Era / Date",f.era)}</div>
-            </div>
-            {renderField("Participants",parseList(f.participants))}
-            <div style={{padding:"14px 16px",background:T.bg,borderRadius:8,border:"1px solid "+T.bd,marginBottom:12}}><div style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:T.goldD,marginBottom:8}}>Cause</div><div style={{fontSize:13,color:T.txM,lineHeight:1.6}}>{f.cause||"Unknown"}</div></div>
-            <div style={{padding:"14px 16px",background:T.bg,borderRadius:8,border:"1px solid "+T.bd,marginBottom:12}}><div style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:T.goldD,marginBottom:8}}>Outcome</div><div style={{fontSize:13,color:T.txM,lineHeight:1.6}}>{f.outcome||"Unknown"}</div></div>
-            <div style={{padding:"14px 16px",background:T.bg,borderRadius:8,border:"1px solid "+T.bd}}><div style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:T.goldD,marginBottom:8}}>Lasting Impact</div><div style={{fontSize:13,color:T.txM,lineHeight:1.6}}>{f.impact||"Unknown"}</div></div>
-          </>}
-          {tmpl==="creature"&&<>
-            <div style={{display:"flex",gap:16,marginBottom:12}}>
-              <div style={{flex:1}}>{renderField("Classification",f.classification)}</div>
-              <div style={{flex:1}}>{renderField("Habitat",f.habitat)}</div>
-            </div>
-            {renderField("Abilities",parseList(f.abilities))}
-            {renderField("Behaviour",f.behaviour)}
-            {renderField("Uses & Significance",f.uses)}
-          </>}
-        </div>
+  return(<div style={{background:T.sf,border:"2px solid "+T.bd,borderRadius:12,overflow:"hidden"}}>
+    <div style={{padding:"20px 24px 16px",borderBottom:"1px solid "+T.bd}}>
+      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold}}>{topic.name}</div>
+      {topic.brief&&<div style={{fontSize:13,color:T.txM,marginTop:4,fontStyle:"italic"}}>{topic.brief}</div>}
+      {topic.tags&&topic.tags.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>{topic.tags.map(t=><Tag key={t} label={t}/>)}</div>}
+    </div>
+    <div style={{display:"flex",minHeight:280}}>
+      <div style={{width:260,flexShrink:0,background:T.bg,borderRight:"1px solid "+T.bd,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:T.txD,padding:20,textAlign:"center"}}>
+        <div><div style={{fontSize:48,marginBottom:12,opacity:.3}}>{tmpl==="entity"?"👤":tmpl==="place"?"🗺️":tmpl==="system"?"⚙️":tmpl==="culture"?"🎭":tmpl==="event"?"📜":"🌿"}</div>Image placeholder</div></div>
+      <div style={{flex:1,padding:"20px 24px",overflowY:"auto"}}>
+        {tmpl==="entity"&&<>{quote(f.quote)}<div style={{display:"flex",gap:16,marginBottom:12}}><div style={{flex:1}}>{rF("Skills",pL(f.skills))}</div><div style={{flex:1}}>{rF("Equipment",pL(f.equipment))}</div></div>{box("Personal Information",f.personal)}{box("History",f.history)}{rF("Relationships",pL(f.relationships))}</>}
+        {tmpl==="place"&&<><div style={{display:"flex",gap:16,marginBottom:12}}><div style={{flex:1}}>{rF("Type",f.type)}</div><div style={{flex:1}}>{rF("Region",f.region)}</div></div>{rF("Key Features",pL(f.features))}{rF("Inhabitants",f.inhabitants)}{box("Significance",f.significance)}{box("History",f.history)}</>}
+        {tmpl==="system"&&<>{quote(f.principle)}{rF("Components",pL(f.components))}<div style={{display:"flex",gap:16,marginBottom:12}}><div style={{flex:1}}>{rF("Practitioners",f.practitioners)}</div><div style={{flex:1}}>{rF("Effects",f.effects)}</div></div>{rF("Limitations",f.limitations)}{box("Origin",f.origin)}</>}
+        {tmpl==="culture"&&<>{rF("Origin",f.origin)}{rF("Key Practices",pL(f.practices))}{rF("Significance",f.significance)}{rF("Practitioners",f.practitioners)}{rF("Notable Events",pL(f.notable_events))}</>}
+        {tmpl==="event"&&<>{rF("Era / Date",f.era)}{rF("Participants",pL(f.participants))}{box("Cause",f.cause)}{box("Outcome",f.outcome)}{box("Lasting Impact",f.impact)}</>}
+        {tmpl==="creature"&&<><div style={{display:"flex",gap:16,marginBottom:12}}><div style={{flex:1}}>{rF("Classification",f.classification)}</div><div style={{flex:1}}>{rF("Habitat",f.habitat)}</div></div>{rF("Abilities",pL(f.abilities))}{rF("Behaviour",f.behaviour)}{rF("Uses",f.uses)}</>}
       </div>
     </div>
-  );
+  </div>);
+}
+
+// === Map Viewer ===
+function MapViewer({svgStr,pack,worldId,onSelectEntity,onClose}){
+  const containerRef=useRef(null);
+  const[zoom,setZoom]=useState(1);
+  const[pan,setPan]=useState({x:0,y:0});
+  const[dragging,setDragging]=useState(false);
+  const[dragStart,setDragStart]=useState({x:0,y:0});
+  const[sidebar,setSidebar]=useState(null);
+
+  const handleSvgClick=useCallback((e)=>{
+    let el=e.target;
+    // Walk up to find a meaningful element
+    while(el&&el.tagName!=='svg'){
+      const id=el.id||"";const cls=el.getAttribute("class")||"";
+      // State detection
+      if(id.match(/^state\d+/)||cls.includes("state")){
+        const num=parseInt((id.match(/\d+/)||["0"])[0]);
+        if(pack&&pack.states&&pack.states[num]){
+          const s=pack.states[num];setSidebar({type:"state",data:s,name:s.name||s.fullName});
+        }return;
+      }
+      // Burg detection
+      if(id.match(/^burg\d+/)||cls.includes("burg")){
+        const num=parseInt((id.match(/\d+/)||["0"])[0]);
+        if(pack&&pack.burgs&&pack.burgs[num]){
+          const b=pack.burgs[num];setSidebar({type:"burg",data:b,name:b.name});
+        }return;
+      }
+      el=el.parentElement;
+    }
+  },[pack]);
+
+  const handleWheel=useCallback((e)=>{e.preventDefault();const d=e.deltaY>0?0.9:1.1;setZoom(z=>Math.max(0.1,Math.min(10,z*d)));},[]);
+  const handleMouseDown=(e)=>{if(e.button===0){setDragging(true);setDragStart({x:e.clientX-pan.x,y:e.clientY-pan.y});}};
+  const handleMouseMove=(e)=>{if(dragging)setPan({x:e.clientX-dragStart.x,y:e.clientY-dragStart.y});};
+  const handleMouseUp=()=>setDragging(false);
+
+  return(<div style={{display:"flex",height:"100%",overflow:"hidden"}}>
+    <div style={{flex:1,position:"relative",overflow:"hidden",background:"#0a0e14",cursor:dragging?"grabbing":"grab"}}
+      onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+      <div ref={containerRef} className="map-container" onClick={handleSvgClick}
+        style={{transform:`translate(${pan.x}px,${pan.y}px) scale(${zoom})`,transformOrigin:"0 0",transition:dragging?"none":"transform 0.1s"}}
+        dangerouslySetInnerHTML={{__html:svgStr}}/>
+      <div style={{position:"absolute",bottom:16,right:16,display:"flex",gap:8}}>
+        <Btn sm v="s" onClick={()=>setZoom(z=>Math.min(10,z*1.3))}>+</Btn>
+        <Btn sm v="s" onClick={()=>setZoom(z=>Math.max(0.1,z/1.3))}>−</Btn>
+        <Btn sm v="s" onClick={()=>{setZoom(1);setPan({x:0,y:0});}}>Reset</Btn>
+      </div>
+    </div>
+    {/* Sidebar */}
+    <div style={{width:320,flexShrink:0,background:T.sf,borderLeft:"1px solid "+T.bd,overflowY:"auto",padding:20}}>
+      {!sidebar?<div style={{color:T.txD,fontSize:13,textAlign:"center",paddingTop:40}}>Click a state or settlement on the map to view its data</div>
+      :<div>
+        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,marginBottom:8}}>{sidebar.name}</div>
+        <div style={{fontSize:11,color:T.txD,textTransform:"uppercase",marginBottom:12}}>{sidebar.type}</div>
+        {sidebar.type==="state"&&<div>
+          {[["Government",sidebar.data.form],["Culture",sidebar.data.culture!==undefined?(pack.cultures[sidebar.data.culture]||{}).name:"?"],
+            ["Religion",sidebar.data.religion!==undefined?(pack.religions&&pack.religions[sidebar.data.religion]||{}).name:"?"],
+            ["Area",sidebar.data.area?Math.round(sidebar.data.area)+" cells":"?"],
+            ["Population (rural)",sidebar.data.rural?Math.round(sidebar.data.rural*1000).toLocaleString():"?"],
+            ["Population (urban)",sidebar.data.urban?Math.round(sidebar.data.urban*1000).toLocaleString():"?"],
+          ].map(([k,v],i)=>v&&v!=="?"?<div key={i} style={{marginBottom:8}}><div style={{fontSize:11,color:T.goldD,textTransform:"uppercase"}}>{k}</div><div style={{fontSize:13,color:T.txM}}>{v}</div></div>:null)}
+          {sidebar.data.diplomacy&&<div style={{marginTop:12}}><div style={{fontSize:11,color:T.goldD,textTransform:"uppercase",marginBottom:4}}>Diplomacy</div>
+            {sidebar.data.diplomacy.map((d,i)=>{if(i===0||i===sidebar.data.i||d==="x"||!pack.states[i]||!pack.states[i].name)return null;
+              return<div key={i} style={{fontSize:12,color:T.txM}}>{"• "+pack.states[i].name+": "+d}</div>;}).filter(Boolean).slice(0,10)}
+          </div>}
+        </div>}
+        {sidebar.type==="burg"&&<div>
+          {[["State",sidebar.data.state?((pack.states[sidebar.data.state]||{}).name||"?"):"Unclaimed"],
+            ["Population",sidebar.data.population?Math.round(sidebar.data.population*1000).toLocaleString():"?"],
+            ["Culture",sidebar.data.culture?(pack.cultures[sidebar.data.culture]||{}).name:"?"],
+            ["Religion",sidebar.data.religion?(pack.religions&&pack.religions[sidebar.data.religion]||{}).name:"?"],
+            ["Features",[sidebar.data.capital?"Capital":"",sidebar.data.port?"Port":"",sidebar.data.citadel?"Citadel":"",sidebar.data.walls?"Walled":"",sidebar.data.plaza?"Market":"",sidebar.data.temple?"Temple":""].filter(Boolean).join(", ")||"None"],
+          ].map(([k,v],i)=>v?<div key={i} style={{marginBottom:8}}><div style={{fontSize:11,color:T.goldD,textTransform:"uppercase"}}>{k}</div><div style={{fontSize:13,color:T.txM}}>{v}</div></div>:null)}
+        </div>}
+        <div style={{marginTop:16,display:"flex",gap:8}}>
+          <Btn sm v="a" onClick={()=>{
+            const aid=sidebar.type==="state"?"politics":"notable-locations";
+            const prefix="azg-"+sidebar.type+"-"+(sidebar.data.i||0);
+            onSelectEntity(aid,prefix);
+          }}>View Card</Btn>
+        </div>
+      </div>}
+    </div>
+  </div>);
 }
 
 // === APP ===
@@ -247,33 +408,48 @@ function App(){
   const[scr,setScr]=useState("main");const[worlds,setWorlds]=useState([]);const[worldDescs,setWorldDescs]=useState({});
   const[cW,setCW]=useState(null);const[cA,setCA]=useState(null);const[cC,setCC]=useState(null);
   const[cList,setCList]=useState([]);const[topicList,setTopicList]=useState([]);const[curTopic,setCurTopic]=useState(null);
-  const[sheet,setSheet]=useState("");const[inp,setInp]=useState("");const[busy,setBusy]=useState(false);
-  const[toast,setToast]=useState("");const[gen,setGen]=useState(false);const[worldChat,setWorldChat]=useState(false);
+  const[inp,setInp]=useState("");const[busy,setBusy]=useState(false);const[toast,setToast]=useState("");
+  const[gen,setGen]=useState(false);const[worldChat,setWorldChat]=useState(false);
   const[impTxt,setImpTxt]=useState("");const[mod,setMod]=useState(null);const[modIn,setModIn]=useState("");const[modIn2,setModIn2]=useState("");
   const[bibleData,setBibleData]=useState(null);const[apiKeyInput,setApiKeyInput]=useState("");const[hasKey,setHasKey]=useState(false);
   const[aspCounts,setAspCounts]=useState({});const[tagFilter,setTagFilter]=useState("");const[allTags,setAllTags]=useState([]);
   const[tagInput,setTagInput]=useState("");
-  const endRef=useRef(null);
+  const[mapSvg,setMapSvg]=useState(null);const[mapPack,setMapPack]=useState(null);const[hasMapData,setHasMapData]=useState(false);
+  const endRef=useRef(null);const fileRef=useRef(null);
 
   const flash=(m)=>{setToast(m);setTimeout(()=>setToast(""),2500);};
   const ldW=useCallback(async()=>{const ws=await db.listWorlds();setWorlds(ws);const d={};for(const w of ws)d[w.id]=w.description||await db.getWorldSummary(w.id);setWorldDescs(d);},[]);
   useEffect(()=>{ldW();db.getApiKey().then(k=>{if(k)setHasKey(true);});},[]);
   useEffect(()=>{if(scr==="chat")endRef.current?.scrollIntoView({behavior:"smooth"});},[cC?.messages?.length,scr]);
 
-  const loadAspCounts=async(wid)=>{const c={};for(const a of ASPECTS){c[a.id]=(await db.listTopics(wid,a.id)).length;}c["__worldchat__"]=(await db.listChats(wid,"__worldchat__")).length;setAspCounts(c);};
+  const loadAspCounts=async(wid)=>{const c={};for(const a of ASPECTS)c[a.id]=(await db.listTopics(wid,a.id)).length;c["__worldchat__"]=(await db.listChats(wid,"__worldchat__")).length;setAspCounts(c);const hm=await db.hasMap(wid);setHasMapData(hm);};
 
-  const goMain=()=>{setScr("main");setCW(null);setCA(null);setCC(null);setCurTopic(null);setGen(false);setWorldChat(false);};
+  const goMain=()=>{setScr("main");setCW(null);setCA(null);setCC(null);setCurTopic(null);setGen(false);setWorldChat(false);setMapSvg(null);setMapPack(null);};
   const goWorlds=async()=>{await ldW();setScr("worlds");};
   const goWorld=async(w)=>{setCW(w);setCA(null);setCC(null);setCurTopic(null);setWorldChat(false);await loadAspCounts(w.id);setScr("world");};
-  const goAspect=async(a)=>{setCA(a);const tps=await db.listTopics(cW.id,a.id);setTopicList(tps);setCList(await db.listChats(cW.id,a.id));setTagFilter("");const tags=await db.listAllTags(cW.id);setAllTags(tags);setScr("aspect");};
+  const goAspect=async(a)=>{setCA(a);setTopicList(await db.listTopics(cW.id,a.id));setCList(await db.listChats(cW.id,a.id));setTagFilter("");setAllTags(await db.listAllTags(cW.id));setScr("aspect");};
   const goChat=async(ch,g=false,wc=false)=>{const wid=g?"__general__":cW.id;const aid=g?"__general__":(wc?"__worldchat__":cA.id);const full=await db.loadChat(wid,aid,ch.id);if(full){setCC(full);setGen(g);setWorldChat(wc);setScr("chat");}};
   const goGen=async()=>{setCList(await db.listGeneralChats());setGen(true);setWorldChat(false);setCW(null);setCA(null);setScr("general");};
   const goWorldChat=async()=>{setCList(await db.listChats(cW.id,"__worldchat__"));setWorldChat(true);setGen(false);setScr("worldchatlist");};
+  const goMap=async()=>{setBusy(true);const svg=await db.getMapSvg(cW.id);const pack=await db.getMapPack(cW.id);setMapSvg(svg);setMapPack(pack);setBusy(false);setScr("mapview");};
 
   const openNewWorld=()=>{setModIn("");setModIn2("");setMod({t:"newWorld"});};
   const doNewWorld=async()=>{const n=modIn.trim();setMod(null);if(!n)return;if(worlds.length>=MAX_WORLDS){flash("Max "+MAX_WORLDS);return;}const w=await db.createWorld(n,modIn2.trim());flash("Created: "+n);await ldW();goWorld(w);};
 
-  // === Scan topics from chats ===
+  // Map import
+  const handleMapFile=async(e)=>{
+    const file=e.target.files[0];if(!file||!cW)return;
+    setBusy(true);flash("Parsing map...");
+    try{
+      const text=await file.text();
+      const result=await db.importAzgaarMap(cW.id,text);
+      if(result.error){flash("Error: "+result.error);}
+      else{flash("Imported! "+result.added+" topics from "+result.total+" entities");await loadAspCounts(cW.id);}
+    }catch(err){flash("Failed: "+err.message);}
+    setBusy(false);if(fileRef.current)fileRef.current.value="";
+  };
+
+  // Scan topics from chats
   const scanTopics=async()=>{
     if(!cW||!cA)return;setBusy(true);
     const text=await db.gatherAspectText(cW.id,cA.id);
@@ -282,66 +458,37 @@ function App(){
     const sys=window.buildExtractPrompt(cA,tmpl);
     const resp=await aiCall(sys,[{role:"user",content:text.slice(0,10000)}],2048);
     let parsed=[];
-    try{const c=resp.trim().replace(/^```\w*\n?/,"").replace(/\n?```$/,"");const a=c.match(/\[[\s\S]*\]/);parsed=a?JSON.parse(a[0]):[];}
-    catch(e){flash("Parse error");setBusy(false);return;}
-    // Merge with existing - update existing, add new
+    try{const c=resp.trim().replace(/^```\w*\n?/,"").replace(/\n?```$/,"");const a=c.match(/\[[\s\S]*\]/);parsed=a?JSON.parse(a[0]):[];}catch(e){flash("Parse error");setBusy(false);return;}
     const existing=await db.listTopics(cW.id,cA.id);const byName={};existing.forEach(t=>byName[t.name.toLowerCase()]=t);
     let added=0,updated=0;
-    for(const p of parsed){
-      const key=p.name?.toLowerCase();if(!key)continue;
-      if(byName[key]){
-        // Merge fields and tags
-        const old=byName[key];
-        const merged={...old,brief:p.brief||old.brief,tags:normTags([...(old.tags||[]),...(p.tags||[])]),fields:{...(old.fields||{}),...(p.fields||{})},updated:new Date().toISOString()};
-        await db.saveTopic(merged);updated++;
-      }else{
-        const topic={id:Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,6),name:p.name,brief:p.brief||"",template:tmpl,tags:normTags(p.tags||[]),fields:p.fields||{},aspect_id:cA.id,world_id:cW.id,created:new Date().toISOString(),updated:new Date().toISOString()};
-        await db.saveTopic(topic);added++;
-      }
+    for(const p of parsed){const key=p.name?.toLowerCase();if(!key)continue;
+      if(byName[key]){const old=byName[key];await db.saveTopic({...old,brief:p.brief||old.brief,tags:normTags([...(old.tags||[]),...(p.tags||[])]),fields:{...(old.fields||{}),...(p.fields||{})}});updated++;}
+      else{await db.saveTopic({id:mkId(),name:p.name,brief:p.brief||"",template:tmpl,tags:normTags(p.tags||[]),fields:p.fields||{},aspect_id:cA.id,world_id:cW.id,created:new Date().toISOString(),updated:new Date().toISOString()});added++;}
     }
-    flash((added?" +"+added+" new":"")+(updated?" ~"+updated+" updated":""));
-    setTopicList(await db.listTopics(cW.id,cA.id));
-    await loadAspCounts(cW.id);setBusy(false);
+    flash((added?"+"+added+" new ":"")+(updated?"~"+updated+" updated":""));
+    setTopicList(await db.listTopics(cW.id,cA.id));await loadAspCounts(cW.id);setBusy(false);
   };
 
-  // === Generate single card ===
   const genCard=async(name)=>{
-    if(!cW||!cA)return;setBusy(true);
-    const tmpl=TMPL_FOR[cA.id]||"entity";
-    const text=await db.gatherAspectText(cW.id,cA.id);
-    const bible=await db.getBible(cW.id);
+    if(!cW||!cA)return;setBusy(true);const tmpl=TMPL_FOR[cA.id]||"entity";
+    const text=await db.gatherAspectText(cW.id,cA.id);const bible=await db.getBible(cW.id);
     const sys=window.buildCardPrompt(name,tmpl,cW.name);
-    const resp=await aiCall(sys,[{role:"user",content:"Bible: "+JSON.stringify(bible.facts)+"\n\nConversations:\n"+text.slice(0,8000)}],1500);
-    let parsed=null;
-    try{const c=resp.trim().replace(/^```\w*\n?/,"").replace(/\n?```$/,"");parsed=JSON.parse(c);}
-    catch(e){flash("Parse error");setBusy(false);return;}
-    if(!parsed){setBusy(false);return;}
-    // Save or update
+    const resp=await aiCall(sys,[{role:"user",content:"Bible:"+JSON.stringify(bible.facts)+"\nData:\n"+text.slice(0,8000)}],1500);
+    let parsed;try{parsed=JSON.parse(resp.trim().replace(/^```\w*\n?/,"").replace(/\n?```$/,""));}catch(e){flash("Parse error");setBusy(false);return;}
     const existing=topicList.find(t=>t.name.toLowerCase()===name.toLowerCase());
-    const topic=existing?{...existing,brief:parsed.brief||existing.brief,tags:normTags([...(existing.tags||[]),...(parsed.tags||[])]),fields:{...(existing.fields||{}),...(parsed.fields||{})}}:{id:Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,6),name:parsed.name||name,brief:parsed.brief||"",template:tmpl,tags:normTags(parsed.tags||[]),fields:parsed.fields||{},aspect_id:cA.id,world_id:cW.id,created:new Date().toISOString(),updated:new Date().toISOString()};
-    await db.saveTopic(topic);
-    setCurTopic(topic);setTopicList(await db.listTopics(cW.id,cA.id));setBusy(false);setScr("card");
+    const topic=existing?{...existing,brief:parsed.brief||existing.brief,tags:normTags([...(existing.tags||[]),...(parsed.tags||[])]),fields:{...(existing.fields||{}),...(parsed.fields||{})}}
+      :{id:mkId(),name:parsed.name||name,brief:parsed.brief||"",template:tmpl,tags:normTags(parsed.tags||[]),fields:parsed.fields||{},aspect_id:cA.id,world_id:cW.id,created:new Date().toISOString(),updated:new Date().toISOString()};
+    await db.saveTopic(topic);setCurTopic(topic);setTopicList(await db.listTopics(cW.id,cA.id));setBusy(false);setScr("card");
   };
 
-  // === Add tag to topic ===
-  const addTagToTopic=async(topic,tag)=>{
-    const t={...topic,tags:normTags([...(topic.tags||[]),tag])};
-    await db.saveTopic(t);setCurTopic(t);setTopicList(await db.listTopics(cW.id,cA.id));
-  };
-  const removeTagFromTopic=async(topic,tag)=>{
-    const t={...topic,tags:(topic.tags||[]).filter(tg=>tg!==tag)};
-    await db.saveTopic(t);setCurTopic(t);setTopicList(await db.listTopics(cW.id,cA.id));
-  };
-
-  // === Chat send ===
   const send=async()=>{
     if(!inp.trim()||busy)return;const txt=inp.trim();setInp("");
     const chat={...cC,messages:[...(cC.messages||[]),{role:"user",content:txt,timestamp:new Date().toISOString()}]};
-    setCC(chat);setBusy(true);
-    let sys;const aspectIds=ASPECTS.map(a=>a.id).join(", ");
-    if(gen){const wl=worlds.map(w=>w.name).join(", ");sys="You are WorldForge, a creative worldbuilding assistant in General Chat mode.\nAvailable worlds: "+(wl||"None")+"\nAfter your response, if anything belongs to a specific world, add:\n[FILE: WorldName > aspect-id] brief summary\nValid aspect IDs: "+aspectIds+"\nBe warm, creative.";}
-    else if(worldChat){const bible=await db.getBible(cW.id);const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"]\n"+Object.entries(e).map(([k,v])=>"  "+k+": "+v).join("\n")).join("\n");sys="You are WorldForge for \""+cW.name+"\" | Open Discussion.\n\nBIBLE:\n"+(bt||"(Empty)")+"\n\nAfter each response categorize:\n[CAT: aspect-id] brief\nValid IDs: "+aspectIds+"\nBe creative.";}
-    else{const bible=await db.getBible(cW.id);const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"]\n"+Object.entries(e).map(([k,v])=>"  "+k+": "+v).join("\n")).join("\n");sys="You are WorldForge for \""+cW.name+"\" | \""+cA.name+"\".\n\nBIBLE:\n"+(bt||"(Empty)")+"\n\nBe warm, creative, detailed.";}
+    setCC(chat);setBusy(true);const aIds=ASPECTS.map(a=>a.id).join(", ");
+    let sys;
+    if(gen){const wl=worlds.map(w=>w.name).join(", ");sys="You are WorldForge in General Chat.\nWorlds: "+(wl||"None")+"\nAdd [FILE: World > aspect-id] lines to categorize.\nIDs: "+aIds;}
+    else if(worldChat){const bible=await db.getBible(cW.id);const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"] "+Object.entries(e).map(([k,v])=>k+":"+v).join(", ")).join("\n");sys="WorldForge for \""+cW.name+"\" open discussion.\nBIBLE: "+(bt||"empty")+"\nAdd [CAT: aspect-id] lines.\nIDs: "+aIds;}
+    else{const bible=await db.getBible(cW.id);const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"] "+Object.entries(e).map(([k,v])=>k+":"+v).join(", ")).join("\n");sys="WorldForge for \""+cW.name+"\" | \""+cA.name+"\".\nBIBLE: "+(bt||"empty")+"\nBe creative and detailed.";}
     let resp=await aiCall(sys,chat.messages);const filed=[];
     if(gen){const fp=/\[FILE:\s*(.+?)\s*>\s*(.+?)\]\s*(.+?)(?:\n|$)/g;let m;while((m=fp.exec(resp))!==null){const w=worlds.find(w=>w.name.toLowerCase().includes(m[1].toLowerCase().trim()));const a=ASPECTS.find(a=>a.id===m[2].trim()||a.name.toLowerCase().includes(m[2].toLowerCase().trim()));if(w&&a){await db.fileNote(w.id,a.id,m[3].trim());filed.push(w.name+" > "+a.name);}}resp=resp.replace(fp,"").trim();}
     if(worldChat){const cp=/\[CAT:\s*(.+?)\]\s*(.+?)(?:\n|$)/g;let m;while((m=cp.exec(resp))!==null){const a=ASPECTS.find(a=>a.id===m[1].trim()||a.name.toLowerCase().includes(m[1].toLowerCase().trim()));if(a){await db.fileNote(cW.id,a.id,m[2].trim());filed.push(cW.name+" > "+a.name);}}resp=resp.replace(cp,"").trim();}
@@ -354,95 +501,80 @@ function App(){
   const saveApiKey=async()=>{const k=apiKeyInput.trim();if(k){await db.setApiKey(k);setHasKey(true);flash("Saved!");}else{await db.setApiKey(null);setHasKey(false);flash("Removed");}};
   const openBible=async()=>{if(!cW)return;const b=await db.getBible(cW.id);setBibleData(b.facts||{});setMod({t:"bible"});};
   const openFact=()=>{setModIn("");setMod({t:"fact"});};
-  const doFact=async()=>{const r=modIn.trim();setMod(null);if(!r||!cW)return;const m=r.match(/(.+?)\s*-\s*(.+?):\s*(.+)/);if(m){await db.addFact(cW.id,m[1].trim().toLowerCase().replace(/\s+/g,'-'),m[2].trim(),m[3].trim());flash("Added");}else flash("Format: cat - key: value");};
+  const doFact=async()=>{const r=modIn.trim();setMod(null);if(!r||!cW)return;const m=r.match(/(.+?)\s*-\s*(.+?):\s*(.+)/);if(m){await db.addFact(cW.id,m[1].trim().toLowerCase().replace(/\s+/g,'-'),m[2].trim(),m[3].trim());flash("Added");}else flash("cat - key: value");};
   const openNote=()=>{setModIn("");setMod({t:"note1"});};
   const doNote1=()=>{const r=modIn.trim();if(!r||!r.includes(">")){flash("World > Aspect");return;}const[ws,as]=r.split(">");const w=worlds.find(w=>w.name.toLowerCase().includes(ws.trim().toLowerCase()));const a=ASPECTS.find(a=>a.name.toLowerCase().includes(as.trim().toLowerCase())||a.id.includes(as.trim().toLowerCase()));if(!w||!a){flash("Not found");return;}setMod({t:"note2",w,a});setModIn("");};
   const doNote2=async()=>{const n=modIn.trim();if(!n||!mod?.w||!mod?.a){setMod(null);return;}await db.fileNote(mod.w.id,mod.a.id,n);flash("Filed");setMod(null);};
 
-  // Filtered topics
   const filteredTopics=tagFilter?topicList.filter(t=>(t.tags||[]).includes(tagFilter)):topicList;
 
   const S=(ch)=>(<div style={{height:"100%",background:T.bg,display:"flex",flexDirection:"column",overflow:"hidden"}}>{ch}
     {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:T.card,border:"1px solid "+T.gold+"44",color:T.gold,padding:"10px 24px",borderRadius:10,fontSize:13,zIndex:100,fontWeight:500}}>{toast}</div>}
-    <Modal open={mod?.t==="newWorld"} title="Create World" onClose={()=>setMod(null)}><input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} placeholder="World name..." style={{...iS,marginBottom:10}}/><textarea value={modIn2} onChange={e=>setModIn2(e.target.value)} placeholder="Description..." rows={3} style={{...iS,resize:"vertical"}}/><div style={{display:"flex",gap:8,marginTop:14}}><Btn full onClick={doNewWorld} disabled={!modIn.trim()}>Create</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
+    <Modal open={mod?.t==="newWorld"} title="Create World" onClose={()=>setMod(null)}><input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} placeholder="World name..." style={{...iS,marginBottom:10}}/><textarea value={modIn2} onChange={e=>setModIn2(e.target.value)} placeholder="Description..." rows={2} style={{...iS,resize:"vertical"}}/><div style={{display:"flex",gap:8,marginTop:14}}><Btn full onClick={doNewWorld} disabled={!modIn.trim()}>Create</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
     <Modal open={mod?.t==="fact"} title="Add to Bible" onClose={()=>setMod(null)}><input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doFact()} placeholder="category - key: value" style={iS}/><div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doFact} disabled={!modIn.trim()}>Add</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
     <Modal open={mod?.t==="note1"} title="File Note" onClose={()=>setMod(null)}><input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doNote1()} placeholder="World > Aspect" style={iS}/><div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doNote1} disabled={!modIn.trim()}>Next</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
     <Modal open={mod?.t==="note2"} title={"→ "+(mod?.w?.name||"")+" > "+(mod?.a?.name||"")} onClose={()=>setMod(null)}><textarea autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} placeholder="Note..." rows={3} style={{...iS,resize:"vertical"}}/><div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doNote2} disabled={!modIn.trim()}>File</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
-    <Modal open={mod?.t==="bible"} title={(cW?.name||"")+" Bible"} onClose={()=>setMod(null)} wide>{bibleData&&Object.keys(bibleData).length>0?<div style={{maxHeight:500,overflowY:"auto"}}>{Object.entries(bibleData).map(([cat,ent])=>(<div key={cat} style={{marginBottom:14}}><div style={{fontSize:14,fontWeight:600,color:T.gold,marginBottom:4,textTransform:"capitalize"}}>{cat.replace(/-/g,' ')}</div>{Object.entries(ent).map(([k,v])=><div key={k} style={{fontSize:13,color:T.txM,padding:"2px 0 2px 14px"}}>{k}: {v}</div>)}</div>))}</div>:<div style={{color:T.txD,padding:12}}>Empty.</div>}<Btn full v="s" onClick={()=>setMod(null)} style={{marginTop:14}}>Close</Btn></Modal>
-    <Modal open={mod?.t==="delAll"} title="Delete Everything?" onClose={()=>setMod(null)}><div style={{fontSize:13,color:T.txD,marginBottom:16}}>Permanent.</div><div style={{display:"flex",gap:8}}><Btn full v="d" onClick={async()=>{setMod(null);await IDB.clear();await ldW();flash("Deleted");goMain();}}>Delete All</Btn><Btn full v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
-    <Modal open={mod?.t==="addTag"} title="Add Tag" onClose={()=>setMod(null)}><input autoFocus value={tagInput} onChange={e=>setTagInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&tagInput.trim()){addTagToTopic(curTopic,tagInput.trim());setTagInput("");setMod(null);}}} placeholder="tag name..." style={iS}/>{allTags.length>0&&<div style={{marginTop:10,display:"flex",gap:4,flexWrap:"wrap"}}>{allTags.slice(0,20).map(t=><Tag key={t.tag} label={t.tag+" ("+t.count+")"} onClick={()=>{addTagToTopic(curTopic,t.tag);setMod(null);}}/>)}</div>}<div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={()=>{if(tagInput.trim()){addTagToTopic(curTopic,tagInput.trim());setTagInput("");setMod(null);}}} disabled={!tagInput.trim()}>Add</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
+    <Modal open={mod?.t==="bible"} title={(cW?.name||"")+" Bible"} onClose={()=>setMod(null)} wide>{bibleData&&Object.keys(bibleData).length>0?<div style={{maxHeight:500,overflowY:"auto"}}>{Object.entries(bibleData).map(([cat,ent])=>(<div key={cat} style={{marginBottom:14}}><div style={{fontSize:14,fontWeight:600,color:T.gold,textTransform:"capitalize"}}>{cat.replace(/-/g,' ')}</div>{Object.entries(ent).map(([k,v])=><div key={k} style={{fontSize:13,color:T.txM,paddingLeft:14}}>{k}: {v}</div>)}</div>))}</div>:<div style={{color:T.txD}}>Empty.</div>}<Btn full v="s" onClick={()=>setMod(null)} style={{marginTop:14}}>Close</Btn></Modal>
+    <Modal open={mod?.t==="delAll"} title="Delete Everything?" onClose={()=>setMod(null)}><div style={{display:"flex",gap:8}}><Btn full v="d" onClick={async()=>{setMod(null);await IDB.clear();await ldW();flash("Deleted");goMain();}}>Delete All</Btn><Btn full v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
+    <Modal open={mod?.t==="addTag"} title="Add Tag" onClose={()=>setMod(null)}><input autoFocus value={tagInput} onChange={e=>setTagInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&tagInput.trim()){(async()=>{const t={...curTopic,tags:normTags([...(curTopic.tags||[]),tagInput.trim()])};await db.saveTopic(t);setCurTopic(t);setTopicList(await db.listTopics(cW.id,cA.id));setTagInput("");setMod(null);})();}}} placeholder="tag..." style={iS}/>{allTags.length>0&&<div style={{marginTop:10,display:"flex",gap:4,flexWrap:"wrap"}}>{allTags.slice(0,20).map(t=><Tag key={t.tag} label={t.tag} onClick={async()=>{const tp={...curTopic,tags:normTags([...(curTopic.tags||[]),t.tag])};await db.saveTopic(tp);setCurTopic(tp);setTopicList(await db.listTopics(cW.id,cA.id));setMod(null);}}/>)}</div>}<div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={async()=>{if(!tagInput.trim())return;const t={...curTopic,tags:normTags([...(curTopic.tags||[]),tagInput.trim()])};await db.saveTopic(t);setCurTopic(t);setTopicList(await db.listTopics(cW.id,cA.id));setTagInput("");setMod(null);}} disabled={!tagInput.trim()}>Add</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
+    <input ref={fileRef} type="file" accept=".map,.txt" style={{display:"none"}} onChange={handleMapFile}/>
   </div>);
 
-  // ==== SCREENS ====
-
+  // === SCREENS ===
   if(scr==="main")return S(<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40}}>
-    <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:52,fontWeight:700,color:T.gold,marginBottom:6,letterSpacing:2}}>WorldForge</div>
+    <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:52,fontWeight:700,color:T.gold,letterSpacing:2}}>WorldForge</div>
     <div style={{color:T.txD,fontSize:15,marginBottom:40}}>Worldbuilding AI Notebook</div>
     {!hasKey&&<div style={{marginBottom:24,padding:"8px 20px",background:T.red+"33",borderRadius:8,fontSize:13,color:T.redTx}}>No API key — Settings</div>}
     <div style={{display:"flex",gap:24,width:"100%",maxWidth:900}}>
-      {[{icon:"🌍",label:"Worlds",desc:"Browse, create, and develop your worlds",onClick:goWorlds},{icon:"⚒️",label:"ForgeMaster",desc:"General chat with cross-world intelligence",onClick:goGen},{icon:"⚙️",label:"Settings",desc:"API key, export, import",onClick:()=>{setScr("settings");db.getApiKey().then(k=>setApiKeyInput(k||""));}}].map((c,i)=>(
-        <button key={i} onClick={c.onClick} style={{flex:1,background:T.sf,border:"2px solid "+T.bd,borderRadius:16,padding:"48px 24px",cursor:"pointer",textAlign:"center",transition:"border-color .2s, transform .15s",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:280}}
-          onMouseEnter={e=>{e.currentTarget.style.borderColor=T.gold;e.currentTarget.style.transform="translateY(-4px)";}}
-          onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bd;e.currentTarget.style.transform="translateY(0)";}}>
-          <div style={{fontSize:48,marginBottom:20}}>{c.icon}</div>
-          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold,marginBottom:8}}>{c.label}</div>
-          <div style={{fontSize:13,color:T.txD,lineHeight:1.5}}>{c.desc}</div>
-        </button>))}
-    </div>
-  </div>);
+      {[{icon:"🌍",label:"Worlds",desc:"Browse, create, and build worlds",onClick:goWorlds},{icon:"⚒️",label:"ForgeMaster",desc:"General chat with cross-world filing",onClick:goGen},{icon:"⚙️",label:"Settings",desc:"API key, data, export/import",onClick:()=>{setScr("settings");db.getApiKey().then(k=>setApiKeyInput(k||""));}}].map((c,i)=>(<button key={i} onClick={c.onClick} style={{flex:1,background:T.sf,border:"2px solid "+T.bd,borderRadius:16,padding:"48px 24px",cursor:"pointer",textAlign:"center",transition:"border-color .2s, transform .15s",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:280}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.gold;e.currentTarget.style.transform="translateY(-4px)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bd;e.currentTarget.style.transform="translateY(0)";}}><div style={{fontSize:48,marginBottom:20}}>{c.icon}</div><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold,marginBottom:8}}>{c.label}</div><div style={{fontSize:13,color:T.txD}}>{c.desc}</div></button>))}
+    </div></div>);
 
   if(scr==="worlds")return S(<><div style={{padding:"20px 40px 16px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={goMain} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:700,color:T.gold,flex:1}}>Worlds</div><Btn onClick={openNewWorld}>+ New World</Btn></div>
-    <div style={{flex:1,overflowY:"auto",padding:"24px 40px"}}>{worlds.length===0?<div style={{textAlign:"center",padding:80}}><div style={{fontSize:64,opacity:.3}}>🌍</div><div style={{color:T.txD,fontSize:16,margin:"20px 0"}}> No worlds yet</div><Btn onClick={openNewWorld}>Create World</Btn></div>
-      :worlds.map(w=>(<button key={w.id} onClick={()=>goWorld(w)} style={{display:"flex",gap:20,width:"100%",maxWidth:800,margin:"0 auto 16px",padding:20,background:T.sf,border:"2px solid "+T.bd,borderRadius:12,cursor:"pointer",textAlign:"left",transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{width:100,height:100,background:T.sf2,border:"1px solid "+T.bd,borderRadius:8,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36}}>🌍</div><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,marginBottom:6}}>{w.name}</div><div style={{fontSize:13,color:T.txM,lineHeight:1.5}}>{worldDescs[w.id]}</div><div style={{fontSize:11,color:T.txD,marginTop:8}}>{"Updated "+new Date(w.updated).toLocaleDateString()}</div></div></button>))}</div></>);
+    <div style={{flex:1,overflowY:"auto",padding:"24px 40px"}}>{worlds.length===0?<div style={{textAlign:"center",padding:80}}><div style={{fontSize:64,opacity:.3}}>🌍</div><div style={{color:T.txD,margin:"20px 0"}}>No worlds yet</div><Btn onClick={openNewWorld}>Create World</Btn></div>
+      :worlds.map(w=>(<button key={w.id} onClick={()=>goWorld(w)} style={{display:"flex",gap:20,width:"100%",maxWidth:800,margin:"0 auto 16px",padding:20,background:T.sf,border:"2px solid "+T.bd,borderRadius:12,cursor:"pointer",textAlign:"left",transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{width:100,height:100,background:T.sf2,border:"1px solid "+T.bd,borderRadius:8,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36}}>🌍</div><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,marginBottom:6}}>{w.name}</div><div style={{fontSize:13,color:T.txM,lineHeight:1.5}}>{worldDescs[w.id]||""}</div><div style={{fontSize:11,color:T.txD,marginTop:8}}>{"Updated "+new Date(w.updated).toLocaleDateString()}</div></div></button>))}</div></>);
 
-  if(scr==="world"&&cW)return S(<><div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={goWorlds} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold}}>{cW.name}</div></div><Btn sm v="g" onClick={openBible}>📖 Bible</Btn></div>
+  if(scr==="world"&&cW)return S(<><div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={goWorlds} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold}}>{cW.name}</div></div>
+    <div style={{display:"flex",gap:8}}>
+      <Btn sm v="g" onClick={openBible}>📖 Bible</Btn>
+      {hasMapData&&<Btn sm v="a" onClick={goMap}>🗺️ Map</Btn>}
+      <Btn sm v="s" onClick={()=>fileRef.current?.click()} disabled={busy}>{busy?"Importing...":"📥 Import Map"}</Btn>
+    </div></div>
     <div style={{flex:1,overflowY:"auto",padding:"20px 32px"}}>
-      <button onClick={goWorldChat} style={{width:"100%",padding:"24px",background:"linear-gradient(135deg,"+T.sf+","+T.sf2+")",border:"2px solid "+T.bd,borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:24,transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,marginBottom:6}}>{"⚒️ World Chat"}</div><div style={{fontSize:13,color:T.txM}}>{"Open discussion — auto-categorizes"}</div></button>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>{ASPECTS.map(a=>{const cnt=aspCounts[a.id]||0;return(<button key={a.id} onClick={()=>goAspect(a)} style={{padding:"20px 12px",background:T.sf,border:"1px solid "+T.bd,borderRadius:10,cursor:"pointer",textAlign:"center",transition:"border-color .2s, transform .15s",position:"relative"}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.gold;e.currentTarget.style.transform="translateY(-2px)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bd;e.currentTarget.style.transform="translateY(0)";}}><div style={{fontSize:28,marginBottom:8}}>{a.icon}</div><div style={{fontSize:12,fontWeight:500,color:T.tx,lineHeight:1.3}}>{a.name}</div>{cnt>0&&<div style={{position:"absolute",top:6,right:8,fontSize:10,color:T.txD,background:T.sf2,padding:"1px 6px",borderRadius:8}}>{cnt}</div>}</button>);})}</div>
+      <button onClick={goWorldChat} style={{width:"100%",padding:"24px",background:"linear-gradient(135deg,"+T.sf+","+T.sf2+")",border:"2px solid "+T.bd,borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:24,transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,marginBottom:6}}>{"⚒️ World Chat"}</div><div style={{fontSize:13,color:T.txM}}>Open discussion — auto-categorizes</div></button>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>{ASPECTS.map(a=>{const cnt=aspCounts[a.id]||0;return(<button key={a.id} onClick={()=>goAspect(a)} style={{padding:"20px 12px",background:T.sf,border:"1px solid "+T.bd,borderRadius:10,cursor:"pointer",textAlign:"center",transition:"border-color .2s, transform .15s",position:"relative"}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.gold;e.currentTarget.style.transform="translateY(-2px)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bd;e.currentTarget.style.transform="translateY(0)";}}><div style={{fontSize:28,marginBottom:8}}>{a.icon}</div><div style={{fontSize:12,fontWeight:500,color:T.tx}}>{a.name}</div>{cnt>0&&<div style={{position:"absolute",top:6,right:8,fontSize:10,color:T.txD,background:T.sf2,padding:"1px 6px",borderRadius:8}}>{cnt}</div>}</button>);})}</div>
     </div></>);
 
-  // ASPECT — Topic Encyclopedia + Chat access
+  // MAP VIEW
+  if(scr==="mapview"&&cW)return S(<><div style={{padding:"12px 32px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd,flexShrink:0}}><button onClick={()=>setScr("world")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold,flex:1}}>{"🗺️ "+cW.name+" — Map"}</div></div>
+    <div style={{flex:1,overflow:"hidden"}}>{mapSvg?<MapViewer svgStr={mapSvg} pack={mapPack} worldId={cW.id} onSelectEntity={async(aid,prefix)=>{
+      // Find topic by azgaar id prefix
+      const topics=await db.listTopics(cW.id,aid);const t=topics.find(tp=>tp.id.startsWith(prefix));
+      if(t){setCA(ASPECTS.find(a=>a.id===aid));setCurTopic(t);setTopicList(topics);setScr("card");}else flash("Topic not found");
+    }} onClose={()=>setScr("world")}/>:<div style={{padding:40,textAlign:"center",color:T.txD}}>No map data</div>}</div></>);
+
+  // ASPECT with topic encyclopedia
   if(scr==="aspect"&&cW&&cA)return S(<><div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("world")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold}}>{cA.icon+" "+cA.name}</div><div style={{fontSize:12,color:T.txD}}>{cW.name+" · "+topicList.length+" entries · "+cList.length+" chats"}</div></div>
-    <div style={{display:"flex",gap:8}}><Btn sm v="a" onClick={scanTopics} disabled={busy}>{busy?"Scanning...":"🔍 Scan Chats"}</Btn><Btn sm onClick={async()=>{const c=await db.createChat(cW.id,cA.id);setCC(c);setGen(false);setWorldChat(false);setScr("chat");}}>💬 New Chat</Btn>{cList.length>0&&<Btn sm v="s" onClick={()=>setScr("chatlist")}>Continue</Btn>}</div></div>
+    <div style={{display:"flex",gap:8}}><Btn sm v="a" onClick={scanTopics} disabled={busy}>{busy?"Scanning...":"🔍 Scan"}</Btn><Btn sm onClick={async()=>{const c=await db.createChat(cW.id,cA.id);setCC(c);setGen(false);setWorldChat(false);setScr("chat");}}>💬 Chat</Btn>{cList.length>0&&<Btn sm v="s" onClick={()=>setScr("chatlist")}>Continue</Btn>}</div></div>
     <div style={{flex:1,overflowY:"auto",padding:"20px 32px"}}>
-      {/* Tag filter bar */}
-      {(topicList.length>0||allTags.length>0)&&<div style={{marginBottom:16,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-        <span style={{fontSize:11,color:T.txD,textTransform:"uppercase",letterSpacing:1}}>Filter:</span>
-        <Tag label="All" active={!tagFilter} onClick={()=>setTagFilter("")}/>
-        {allTags.filter(t=>topicList.some(tp=>(tp.tags||[]).includes(t.tag))).slice(0,15).map(t=><Tag key={t.tag} label={t.tag} active={tagFilter===t.tag} onClick={()=>setTagFilter(tagFilter===t.tag?"":t.tag)}/>)}
-      </div>}
-      {/* Topic grid */}
-      {filteredTopics.length===0?<div style={{textAlign:"center",padding:40}}><div style={{fontSize:48,opacity:.3}}>{cA.icon}</div><div style={{color:T.txD,fontSize:14,margin:"16px 0"}}>{topicList.length===0?"No entries yet. Chat about "+cA.name+" then hit Scan.":"No matches for this tag."}</div></div>
-        :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220,1fr))",gap:14}}>
-          {filteredTopics.map(t=>(
-            <button key={t.id} onClick={()=>{setCurTopic(t);setScr("card");}} style={{padding:"16px",background:T.sf,border:"1px solid "+T.bd,borderRadius:10,cursor:"pointer",textAlign:"left",transition:"border-color .2s"}}
-              onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
-              <div style={{fontSize:15,fontWeight:600,color:T.gold,marginBottom:4}}>{t.name}</div>
-              {t.brief&&<div style={{fontSize:12,color:T.txM,lineHeight:1.4,marginBottom:8}}>{t.brief.slice(0,80)}</div>}
-              {t.tags&&t.tags.length>0&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{t.tags.slice(0,4).map(tg=><Tag key={tg} label={tg}/>)}</div>}
-            </button>
-          ))}
-        </div>}
+      {(topicList.length>0||allTags.length>0)&&<div style={{marginBottom:16,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:11,color:T.txD,textTransform:"uppercase",letterSpacing:1}}>Filter:</span><Tag label="All" active={!tagFilter} onClick={()=>setTagFilter("")}/>{allTags.filter(t=>topicList.some(tp=>(tp.tags||[]).includes(t.tag))).slice(0,15).map(t=><Tag key={t.tag} label={t.tag} active={tagFilter===t.tag} onClick={()=>setTagFilter(tagFilter===t.tag?"":t.tag)}/>)}</div>}
+      {filteredTopics.length===0?<div style={{textAlign:"center",padding:40}}><div style={{fontSize:48,opacity:.3}}>{cA.icon}</div><div style={{color:T.txD,margin:"16px 0"}}>{topicList.length===0?"No entries yet. Chat then Scan, or import a map.":"No matches."}</div></div>
+        :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220,1fr))",gap:14}}>{filteredTopics.map(t=>(<button key={t.id} onClick={()=>{setCurTopic(t);setScr("card");}} style={{padding:16,background:T.sf,border:"1px solid "+T.bd,borderRadius:10,cursor:"pointer",textAlign:"left",transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontSize:15,fontWeight:600,color:T.gold,marginBottom:4}}>{t.name}</div>{t.brief&&<div style={{fontSize:12,color:T.txM,lineHeight:1.4,marginBottom:8}}>{t.brief.slice(0,80)}</div>}{t.tags&&t.tags.length>0&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{t.tags.slice(0,4).map(tg=><Tag key={tg} label={tg}/>)}</div>}{t.source==="azgaar"&&<div style={{fontSize:10,color:T.accent,marginTop:6}}>📍 From map</div>}</button>))}</div>}
     </div></>);
 
   // CARD VIEW
   if(scr==="card"&&curTopic)return S(<><div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("aspect")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold}}>{curTopic.name}</div><div style={{fontSize:12,color:T.txD}}>{cA?.name+" · "+cW?.name}</div></div>
-    <div style={{display:"flex",gap:8}}><Btn sm v="a" onClick={()=>genCard(curTopic.name)} disabled={busy}>{busy?"Generating...":"🔄 Refresh"}</Btn><Btn sm v="s" onClick={()=>{setTagInput("");setMod({t:"addTag"});}}>🏷️ Tag</Btn><Btn sm v="d" onClick={async()=>{await db.deleteTopic(cW.id,cA.id,curTopic.id);setTopicList(await db.listTopics(cW.id,cA.id));flash("Deleted");setScr("aspect");}}>Delete</Btn></div></div>
+    <div style={{display:"flex",gap:8}}><Btn sm v="a" onClick={()=>genCard(curTopic.name)} disabled={busy}>{busy?"...":"🔄 Refresh"}</Btn><Btn sm v="s" onClick={()=>{setTagInput("");setMod({t:"addTag"});}}>🏷️</Btn><Btn sm v="d" onClick={async()=>{await db.deleteTopic(cW.id,cA.id,curTopic.id);setTopicList(await db.listTopics(cW.id,cA.id));flash("Deleted");setScr("aspect");}}>Del</Btn></div></div>
     <div style={{flex:1,overflowY:"auto",padding:"20px 32px"}}><div style={{maxWidth:800,margin:"0 auto"}}><CardView topic={curTopic}/></div></div></>);
 
-  // CHAT LIST
-  if(scr==="chatlist")return S(<><div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("aspect")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold,flex:1}}>Chats</div></div>
-    <div style={{flex:1,overflowY:"auto",padding:"20px 32px",maxWidth:700}}>{cList.map(c=><button key={c.id} onClick={()=>goChat(c)} style={{display:"block",width:"100%",padding:"14px 16px",marginBottom:8,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontSize:14,fontWeight:500}}>{c.title}</div><div style={{fontSize:11,color:T.txD,marginTop:4}}>{new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" msgs"}</div></button>)}</div></>);
+  if(scr==="chatlist")return S(<><div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("aspect")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold,flex:1}}>Chats</div></div><div style={{flex:1,overflowY:"auto",padding:"20px 32px",maxWidth:700}}>{cList.map(c=><button key={c.id} onClick={()=>goChat(c)} style={{display:"block",width:"100%",padding:"14px 16px",marginBottom:8,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontSize:14,fontWeight:500}}>{c.title}</div><div style={{fontSize:11,color:T.txD,marginTop:4}}>{new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" msgs"}</div></button>)}</div></>);
 
-  if(scr==="worldchatlist")return S(<><div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("world")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold}}>World Chat</div></div><Btn sm onClick={async()=>{const c=await db.createChat(cW.id,"__worldchat__");setCC(c);setGen(false);setWorldChat(true);setScr("chat");}}>+ New</Btn></div>
-    <div style={{flex:1,overflowY:"auto",padding:"20px 32px",maxWidth:700}}>{cList.length===0?<div style={{textAlign:"center",padding:40}}><Btn onClick={async()=>{const c=await db.createChat(cW.id,"__worldchat__");setCC(c);setGen(false);setWorldChat(true);setScr("chat");}}>Start World Chat</Btn></div>:cList.map(c=><button key={c.id} onClick={()=>goChat(c,false,true)} style={{display:"block",width:"100%",padding:"14px 16px",marginBottom:8,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontSize:14,fontWeight:500}}>{c.title}</div><div style={{fontSize:11,color:T.txD,marginTop:4}}>{new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" msgs"}</div></button>)}</div></>);
+  if(scr==="worldchatlist")return S(<><div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("world")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold}}>World Chat</div></div><Btn sm onClick={async()=>{const c=await db.createChat(cW.id,"__worldchat__");setCC(c);setGen(false);setWorldChat(true);setScr("chat");}}>+ New</Btn></div><div style={{flex:1,overflowY:"auto",padding:"20px 32px",maxWidth:700}}>{cList.length===0?<div style={{textAlign:"center",padding:40}}><Btn onClick={async()=>{const c=await db.createChat(cW.id,"__worldchat__");setCC(c);setGen(false);setWorldChat(true);setScr("chat");}}>Start</Btn></div>:cList.map(c=><button key={c.id} onClick={()=>goChat(c,false,true)} style={{display:"block",width:"100%",padding:"14px 16px",marginBottom:8,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontSize:14,fontWeight:500}}>{c.title}</div><div style={{fontSize:11,color:T.txD,marginTop:4}}>{new Date(c.updated).toLocaleDateString()}</div></button>)}</div></>);
 
-  if(scr==="general")return S(<><div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={goMain} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold}}>ForgeMaster</div></div><Btn sm onClick={async()=>{const c=await db.createGeneralChat();setCC(c);setGen(true);setWorldChat(false);setScr("chat");}}>+ New</Btn></div>
-    <div style={{flex:1,overflowY:"auto",padding:"20px 32px",maxWidth:700}}>{cList.length===0?<div style={{textAlign:"center",padding:40}}><Btn onClick={async()=>{const c=await db.createGeneralChat();setCC(c);setGen(true);setWorldChat(false);setScr("chat");}}>New Chat</Btn></div>:cList.map(c=><button key={c.id} onClick={()=>goChat(c,true)} style={{display:"block",width:"100%",padding:"14px 16px",marginBottom:8,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontSize:14,fontWeight:500}}>{c.title}</div><div style={{fontSize:11,color:T.txD,marginTop:4}}>{new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" msgs"}</div></button>)}</div></>);
+  if(scr==="general")return S(<><div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={goMain} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:T.gold}}>ForgeMaster</div></div><Btn sm onClick={async()=>{const c=await db.createGeneralChat();setCC(c);setGen(true);setWorldChat(false);setScr("chat");}}>+ New</Btn></div><div style={{flex:1,overflowY:"auto",padding:"20px 32px",maxWidth:700}}>{cList.length===0?<div style={{textAlign:"center",padding:40}}><Btn onClick={async()=>{const c=await db.createGeneralChat();setCC(c);setGen(true);setWorldChat(false);setScr("chat");}}>New Chat</Btn></div>:cList.map(c=><button key={c.id} onClick={()=>goChat(c,true)} style={{display:"block",width:"100%",padding:"14px 16px",marginBottom:8,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontSize:14,fontWeight:500}}>{c.title}</div><div style={{fontSize:11,color:T.txD,marginTop:4}}>{new Date(c.updated).toLocaleDateString()}</div></button>)}</div></>);
 
   if(scr==="chat"&&cC)return S(<React.Fragment>
     <div style={{padding:"12px 32px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd,flexShrink:0}}><button onClick={()=>{setScr(gen?"general":(worldChat?"worldchatlist":"aspect"));setCC(null);}} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1,minWidth:0}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:T.gold,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{gen?"ForgeMaster":(worldChat?"World Chat":cA?.name)}</div><div style={{fontSize:11,color:T.txD}}>{gen?cC.title:cW?.name}</div></div><div style={{display:"flex",gap:6}}>{!gen&&<Btn sm v="g" onClick={openFact}>📝</Btn>}<Btn sm v="g" onClick={openNote}>↗</Btn>{!gen&&<Btn sm v="g" onClick={openBible}>📖</Btn>}</div></div>
-    <div style={{flex:1,overflowY:"auto",padding:"16px 32px"}}><div style={{maxWidth:700,margin:"0 auto"}}>{(!cC.messages||cC.messages.length===0)&&<div style={{padding:"40px 0",textAlign:"center",color:T.txD,fontSize:14}}>{gen?"Type anything.":(worldChat?"Discuss "+cW.name+".":"Start worldbuilding!")}</div>}{(cC.messages||[]).map((m,i)=><Bub key={i} msg={m}/>)}{busy&&<div style={{padding:"12px 0",color:T.goldD,fontSize:13,fontStyle:"italic"}}>Forging...</div>}<div ref={endRef}/></div></div>
+    <div style={{flex:1,overflowY:"auto",padding:"16px 32px"}}><div style={{maxWidth:700,margin:"0 auto"}}>{(!cC.messages||cC.messages.length===0)&&<div style={{padding:"40px 0",textAlign:"center",color:T.txD,fontSize:14}}>Start worldbuilding!</div>}{(cC.messages||[]).map((m,i)=><Bub key={i} msg={m}/>)}{busy&&<div style={{padding:"12px 0",color:T.goldD,fontSize:13,fontStyle:"italic"}}>Forging...</div>}<div ref={endRef}/></div></div>
     <div style={{padding:"12px 32px 16px",borderTop:"1px solid "+T.bd,background:T.sf,flexShrink:0}}><div style={{maxWidth:700,margin:"0 auto",display:"flex",gap:10,alignItems:"flex-end"}}><textarea value={inp} onChange={e=>setInp(e.target.value)} placeholder="Type..." onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}} rows={1} style={{flex:1,resize:"none",padding:"10px 16px",borderRadius:10,border:"1px solid "+T.bd,background:T.bg,color:T.tx,fontSize:14,fontFamily:"inherit",outline:"none",maxHeight:140,lineHeight:1.4}} onInput={e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,140)+"px";}}/><button onClick={send} disabled={busy||!inp.trim()} style={{background:T.gold,border:"none",borderRadius:10,width:44,height:44,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",opacity:busy||!inp.trim()?0.4:1,fontSize:18,flexShrink:0,color:T.bg,fontWeight:700}}>{"↑"}</button></div></div>
   </React.Fragment>);
 
@@ -451,9 +583,9 @@ function App(){
       <div style={{fontSize:13,fontWeight:600,color:T.gold,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>API Key</div>
       <input type="password" value={apiKeyInput} onChange={e=>setApiKeyInput(e.target.value)} placeholder="sk-ant-api03-..." style={{...iS,fontFamily:"monospace",fontSize:13,maxWidth:400}}/>
       <div style={{display:"flex",gap:8,marginTop:10}}><Btn onClick={saveApiKey}>{hasKey?"Update":"Save"}</Btn>{hasKey&&<Btn v="s" onClick={async()=>{setApiKeyInput("");await db.setApiKey(null);setHasKey(false);flash("Removed");}}>Remove</Btn>}</div>
-      <div style={{fontSize:11,color:T.txD,marginTop:8}}>{hasKey?"✅ Saved locally.":"⚠️ No key."}</div>
-      <div style={{borderTop:"1px solid "+T.bd,marginTop:24,paddingTop:20}}><div style={{fontSize:13,fontWeight:600,color:T.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:1}}>Data</div><div style={{display:"flex",gap:10}}><Btn v="s" onClick={doExport}>📤 Export</Btn><Btn v="s" onClick={()=>setScr("import")}>📥 Import</Btn><Btn v="d" onClick={()=>setMod({t:"delAll"})}>🗑️ Delete</Btn></div></div>
-      <div style={{marginTop:32,fontSize:11,color:T.txD,lineHeight:1.6}}>WorldForge Desktop v3{"\n"}6 card templates · Tag system · Persistent topics{"\n"}Compatible with mobile + terminal</div>
+      <div style={{fontSize:11,color:T.txD,marginTop:8}}>{hasKey?"✅ Saved.":"⚠️ No key."}</div>
+      <div style={{borderTop:"1px solid "+T.bd,marginTop:24,paddingTop:20}}><div style={{fontSize:13,fontWeight:600,color:T.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:1}}>Data</div><div style={{display:"flex",gap:10}}><Btn v="s" onClick={doExport}>📤 Export</Btn><Btn v="s" onClick={()=>setScr("import")}>📥 Import</Btn><Btn v="d" onClick={()=>setMod({t:"delAll"})}>🗑️</Btn></div></div>
+      <div style={{marginTop:32,fontSize:11,color:T.txD,lineHeight:1.6}}>WorldForge Desktop v3{"\n"}Azgaar Map Integration · 6 Card Templates · Tags{"\n"}Compatible with mobile + terminal</div>
     </div></>);
 
   if(scr==="import")return S(<><div style={{padding:"16px 32px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("settings")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:T.gold}}>Import</div></div>
