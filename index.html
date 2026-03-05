@@ -13,8 +13,8 @@
 body{background:#0a0a0c;color:#e8e4dc;font-family:'Source Sans 3',sans-serif;-webkit-font-smoothing:antialiased}
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#111}::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
 input,textarea,button,select{font-family:inherit}
-.map-container svg{width:100%;height:100%;background:transparent}
-.map-container svg path:hover,.map-container svg circle:hover{opacity:0.8;cursor:pointer}
+.map-container svg{width:100%;height:100%;background:transparent;color-scheme:light}
+.map-container svg path:hover,.map-container svg circle:hover{filter:brightness(1.2);cursor:pointer}
 .map-container svg text{pointer-events:none}
 </style>
 </head>
@@ -387,7 +387,7 @@ function MapViewer({svgStr,pack,worldId,onSelectEntity,onClose}){
   const handleMouseUp=()=>setDragging(false);
 
   return(<div style={{display:"flex",height:"100%",overflow:"hidden"}}>
-    <div style={{flex:1,position:"relative",overflow:"hidden",background:"#a8c5d6",cursor:dragging?"grabbing":"grab"}}
+    <div style={{flex:1,position:"relative",overflow:"hidden",background:"#e8ecf0",cursor:dragging?"grabbing":"grab"}}
       onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
       <div ref={containerRef} className="map-container" onClick={handleSvgClick}
         style={{transform:`translate(${pan.x}px,${pan.y}px) scale(${zoom})`,transformOrigin:"0 0",transition:dragging?"none":"transform 0.1s"}}
@@ -448,7 +448,7 @@ function App(){
   const[aspCounts,setAspCounts]=useState({});const[tagFilter,setTagFilter]=useState("");const[allTags,setAllTags]=useState([]);
   const[tagInput,setTagInput]=useState("");
   const[mapSvg,setMapSvg]=useState(null);const[mapPack,setMapPack]=useState(null);const[hasMapData,setHasMapData]=useState(false);
-  const endRef=useRef(null);const fileRef=useRef(null);
+  const endRef=useRef(null);const svgFileRef=useRef(null);const jsonFileRef=useRef(null);const mapFileRef=useRef(null);
 
   const flash=(m)=>{setToast(m);setTimeout(()=>setToast(""),2500);};
   const ldW=useCallback(async()=>{const ws=await db.listWorlds();setWorlds(ws);const d={};for(const w of ws)d[w.id]=w.description||await db.getWorldSummary(w.id);setWorldDescs(d);},[]);
@@ -469,19 +469,47 @@ function App(){
   const openNewWorld=()=>{setModIn("");setModIn2("");setMod({t:"newWorld"});};
   const doNewWorld=async()=>{const n=modIn.trim();setMod(null);if(!n)return;if(worlds.length>=MAX_WORLDS){flash("Max "+MAX_WORLDS);return;}const w=await db.createWorld(n,modIn2.trim());flash("Created: "+n);await ldW();goWorld(w);};
 
-  // Map import
+  // Map imports - separate SVG and JSON
+  const handleSvgFile=async(e)=>{
+    const file=e.target.files[0];if(!file||!cW)return;
+    setBusy(true);flash("Loading SVG...");
+    try{const text=await file.text();await db.saveMapSvg(cW.id,text);await loadAspCounts(cW.id);flash("Map image loaded!");setMod(null);}
+    catch(err){flash("Failed: "+err.message);}
+    setBusy(false);if(svgFileRef.current)svgFileRef.current.value="";
+  };
+  const handleJsonFile=async(e)=>{
+    const file=e.target.files[0];if(!file||!cW)return;
+    setBusy(true);flash("Parsing JSON data...");
+    try{
+      const text=await file.text();const pack=JSON.parse(text);
+      const keys=Object.keys(pack);
+      console.log("Azgaar JSON keys:",keys);
+      if(!pack.states&&!pack.burgs){flash("No states/burgs found in JSON");setBusy(false);return;}
+      await db.saveMapPack(cW.id,pack);
+      const topics=generateTopicsFromPack(pack,cW.id);
+      let added=0;
+      for(const t of topics){
+        const existing=await IDB.get("topic:"+cW.id+":"+t.aspect_id+":"+t.id);
+        if(!existing){await db.saveTopic(t);added++;}
+        else{await db.saveTopic({...existing,fields:{...(existing.fields||{}),...(t.fields||{})},tags:normTags([...(existing.tags||[]),...(t.tags||[])])});}
+      }
+      await loadAspCounts(cW.id);flash("Imported! "+added+" topics from "+topics.length+" entities");setMod(null);
+    }catch(err){flash("JSON parse failed: "+err.message);console.error(err);}
+    setBusy(false);if(jsonFileRef.current)jsonFileRef.current.value="";
+  };
   const handleMapFile=async(e)=>{
     const file=e.target.files[0];if(!file||!cW)return;
-    setBusy(true);flash("Parsing "+file.name+" ("+Math.round(file.size/1024)+"KB)...");
+    setBusy(true);flash("Parsing .map file...");
     try{
       const text=await file.text();
       const result=await db.importAzgaarMap(cW.id,text);
-      if(result.debug)console.log("WorldForge Map Import Debug:",result.debug);
-      if(result.error){flash("Error: "+result.error);console.error("Map import error:",result.error,result.debug);}
-      else{flash("Imported! "+result.added+" topics from "+result.total+" entities");await loadAspCounts(cW.id);}
-    }catch(err){flash("Failed: "+err.message);console.error(err);}
-    setBusy(false);if(fileRef.current)fileRef.current.value="";
+      if(result.debug)console.log("Map import debug:",result.debug);
+      if(result.error){flash("Error: "+result.error);console.error(result);}
+      else{flash("Imported! "+result.added+" topics from "+result.total+" entities");await loadAspCounts(cW.id);setMod(null);}
+    }catch(err){flash("Failed: "+err.message);}
+    setBusy(false);if(mapFileRef.current)mapFileRef.current.value="";
   };
+  const openMapImport=()=>{setMod({t:"mapImport"});};
 
   // Scan topics from chats
   const scanTopics=async()=>{
@@ -551,7 +579,31 @@ function App(){
     <Modal open={mod?.t==="bible"} title={(cW?.name||"")+" Bible"} onClose={()=>setMod(null)} wide>{bibleData&&Object.keys(bibleData).length>0?<div style={{maxHeight:500,overflowY:"auto"}}>{Object.entries(bibleData).map(([cat,ent])=>(<div key={cat} style={{marginBottom:14}}><div style={{fontSize:14,fontWeight:600,color:T.gold,textTransform:"capitalize"}}>{cat.replace(/-/g,' ')}</div>{Object.entries(ent).map(([k,v])=><div key={k} style={{fontSize:13,color:T.txM,paddingLeft:14}}>{k}: {v}</div>)}</div>))}</div>:<div style={{color:T.txD}}>Empty.</div>}<Btn full v="s" onClick={()=>setMod(null)} style={{marginTop:14}}>Close</Btn></Modal>
     <Modal open={mod?.t==="delAll"} title="Delete Everything?" onClose={()=>setMod(null)}><div style={{display:"flex",gap:8}}><Btn full v="d" onClick={async()=>{setMod(null);await IDB.clear();await ldW();flash("Deleted");goMain();}}>Delete All</Btn><Btn full v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
     <Modal open={mod?.t==="addTag"} title="Add Tag" onClose={()=>setMod(null)}><input autoFocus value={tagInput} onChange={e=>setTagInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&tagInput.trim()){(async()=>{const t={...curTopic,tags:normTags([...(curTopic.tags||[]),tagInput.trim()])};await db.saveTopic(t);setCurTopic(t);setTopicList(await db.listTopics(cW.id,cA.id));setTagInput("");setMod(null);})();}}} placeholder="tag..." style={iS}/>{allTags.length>0&&<div style={{marginTop:10,display:"flex",gap:4,flexWrap:"wrap"}}>{allTags.slice(0,20).map(t=><Tag key={t.tag} label={t.tag} onClick={async()=>{const tp={...curTopic,tags:normTags([...(curTopic.tags||[]),t.tag])};await db.saveTopic(tp);setCurTopic(tp);setTopicList(await db.listTopics(cW.id,cA.id));setMod(null);}}/>)}</div>}<div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={async()=>{if(!tagInput.trim())return;const t={...curTopic,tags:normTags([...(curTopic.tags||[]),tagInput.trim()])};await db.saveTopic(t);setCurTopic(t);setTopicList(await db.listTopics(cW.id,cA.id));setTagInput("");setMod(null);}} disabled={!tagInput.trim()}>Add</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
-    <input ref={fileRef} type="file" accept=".map,.svg,.txt,.json" style={{display:"none"}} onChange={handleMapFile}/>
+    <Modal open={mod?.t==="mapImport"} title={"Import Azgaar Map — "+(cW?.name||"")} onClose={()=>setMod(null)} wide>
+      <div style={{fontSize:13,color:T.txM,lineHeight:1.6,marginBottom:20}}>
+        In Azgaar, click <b>Export</b> and download separately:
+      </div>
+      <div style={{display:"flex",gap:16,marginBottom:20}}>
+        <div style={{flex:1,padding:20,background:T.bg,borderRadius:10,border:"1px solid "+T.bd}}>
+          <div style={{fontSize:14,fontWeight:600,color:T.gold,marginBottom:8}}>1. Map Image (SVG)</div>
+          <div style={{fontSize:12,color:T.txD,marginBottom:12,lineHeight:1.5}}>Export {">"} Download image {">"} <b>.svg</b><br/>This is what you see on the map viewer.</div>
+          <Btn full v="s" onClick={()=>svgFileRef.current?.click()} disabled={busy}>Upload .svg</Btn>
+          {hasMapData&&<div style={{fontSize:11,color:T.accent,marginTop:8}}>{"✓ SVG loaded"}</div>}
+        </div>
+        <div style={{flex:1,padding:20,background:T.bg,borderRadius:10,border:"1px solid "+T.bd}}>
+          <div style={{fontSize:14,fontWeight:600,color:T.gold,marginBottom:8}}>2. World Data (JSON)</div>
+          <div style={{fontSize:12,color:T.txD,marginBottom:12,lineHeight:1.5}}>Export {">"} Export to JSON {">"} <b>full</b><br/>Auto-creates topics for states, burgs, cultures, religions, rivers, military.</div>
+          <Btn full v="a" onClick={()=>jsonFileRef.current?.click()} disabled={busy}>Upload .json</Btn>
+        </div>
+      </div>
+      <div style={{borderTop:"1px solid "+T.bd,paddingTop:16}}>
+        <div style={{fontSize:12,color:T.txD,marginBottom:8}}>Or import the raw .map save file (experimental):</div>
+        <Btn sm v="s" onClick={()=>mapFileRef.current?.click()} disabled={busy}>Upload .map file</Btn>
+      </div>
+    </Modal>
+    <input ref={svgFileRef} type="file" accept=".svg" style={{display:"none"}} onChange={handleSvgFile}/>
+    <input ref={jsonFileRef} type="file" accept=".json" style={{display:"none"}} onChange={handleJsonFile}/>
+    <input ref={mapFileRef} type="file" accept=".map,.txt" style={{display:"none"}} onChange={handleMapFile}/>
   </div>);
 
   // === SCREENS ===
@@ -571,7 +623,7 @@ function App(){
     <div style={{display:"flex",gap:8}}>
       <Btn sm v="g" onClick={openBible}>📖 Bible</Btn>
       {hasMapData&&<Btn sm v="a" onClick={goMap}>🗺️ Map</Btn>}
-      <Btn sm v="s" onClick={()=>fileRef.current?.click()} disabled={busy}>{busy?"Importing...":"📥 Import Map"}</Btn>
+      <Btn sm v="s" onClick={openMapImport} disabled={busy}>{"📥 Import Map"}</Btn>
     </div></div>
     <div style={{flex:1,overflowY:"auto",padding:"20px 32px"}}>
       <button onClick={goWorldChat} style={{width:"100%",padding:"24px",background:"linear-gradient(135deg,"+T.sf+","+T.sf2+")",border:"2px solid "+T.bd,borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:24,transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,marginBottom:6}}>{"⚒️ World Chat"}</div><div style={{fontSize:13,color:T.txM}}>Open discussion — auto-categorizes</div></button>
