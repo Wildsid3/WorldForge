@@ -326,6 +326,69 @@ window.db={
     const topics=generateTopicsFromPack(pack,wid);
     let added=0;for(const t of topics){const ex=await IDB.get("topic:"+wid+":"+t.aspect_id+":"+t.id);if(!ex){await this.saveTopic(t);added++;}else{await this.saveTopic({...ex,fields:{...(ex.fields||{}),...(t.fields||{})},tags:normTags([...(ex.tags||[]),...(t.tags||[])]),coa:t.coa||ex.coa,mfcg_url:t.mfcg_url||ex.mfcg_url,coords:t.coords||ex.coords});}}
     return{added,total:topics.length};},
+  // === Auto-enrich from Azgaar pack (NO AI needed) ===
+  async autoEnrichFromPack(wid){
+    const pack=await this.getMapPack(wid);if(!pack)return{enriched:0};
+    const states=safeArr(pack.states),burgs=safeArr(pack.burgs),cultures=safeArr(pack.cultures),
+      religions=safeArr(pack.religions);
+    const sN={},cN={},rN={};
+    states.forEach(s=>{if(s&&s.i>0)sN[s.i]=s.name||s.fullName||"";});
+    cultures.forEach(c=>{if(c&&c.i>0)cN[c.i]=c.name||"";});
+    religions.forEach(r=>{if(r&&r.i>0)rN[r.i]=r.name||"";});
+    let enriched=0;
+    // Auto-populate Bible from pack data
+    const b=await this.getBible(wid);if(!b.facts)b.facts={};
+    // States -> politics facts
+    states.forEach(s=>{if(!s||!s.i||s.i===0||s.removed)return;
+      const name=s.fullName||s.name;if(!name)return;
+      if(!b.facts['politics'])b.facts['politics']={};
+      b.facts['politics'][name]=(s.form||"state")+", culture: "+(cN[s.culture]||"?")+", pop: "+Math.round(((s.rural||0)+(s.urban||0))*1000).toLocaleString();
+    });
+    // Cultures -> culture facts
+    cultures.forEach(c=>{if(!c||!c.i||c.i===0||c.removed)return;
+      if(!b.facts['cultures'])b.facts['cultures']={};
+      b.facts['cultures'][c.name||"Culture "+c.i]=(c.type||"")+" culture";
+    });
+    // Religions -> religion facts
+    religions.forEach(r=>{if(!r||!r.i||r.i===0||r.removed)return;
+      if(!b.facts['religions'])b.facts['religions']={};
+      b.facts['religions'][r.name||"Religion "+r.i]=(r.form||"")+" "+(r.type||"religion")+(r.deity?" — deity: "+r.deity:"");
+    });
+    await this.saveBible(wid,b);
+    // Cross-reference: for each burg topic, add tags for its state, culture, religion
+    const locTopics=await this.listTopics(wid,"locations");
+    for(const t of locTopics){
+      if(t.source!=="azgaar")continue;
+      const burgId=parseInt((t.id.match(/\d+$/)||["0"])[0]);
+      const burg=burgs[burgId];if(!burg)continue;
+      const newTags=[...t.tags];
+      if(burg.state&&sN[burg.state])newTags.push(sN[burg.state]);
+      if(burg.culture&&cN[burg.culture])newTags.push(cN[burg.culture]);
+      if(burg.religion&&rN[burg.religion])newTags.push(rN[burg.religion]);
+      // Add biome if available
+      if(burg.capital)newTags.push("capital");
+      if(burg.port)newTags.push("port");
+      const merged={...t,tags:normTags(newTags)};
+      if(merged.tags.length!==t.tags.length){await this.saveTopic(merged);enriched++;}
+    }
+    // Cross-ref: state topics get tags for their burgs
+    const polTopics=await this.listTopics(wid,"politics");
+    for(const t of polTopics){
+      if(t.source!=="azgaar")continue;
+      const stateId=parseInt((t.id.match(/\d+$/)||["0"])[0]);
+      const stateBurgs=burgs.filter(b=>b&&b.state===stateId&&b.name);
+      const newTags=[...t.tags];
+      stateBurgs.slice(0,10).forEach(b=>newTags.push(b.name));
+      // Add diplomatic tags
+      const s=states[stateId];
+      if(s&&s.diplomacy){s.diplomacy.forEach((d,i)=>{
+        if(i>0&&d&&d!=="x"&&d!=="Neutral"&&sN[i])newTags.push(sN[i]);
+      });}
+      const merged={...t,tags:normTags(newTags)};
+      if(merged.tags.length!==t.tags.length){await this.saveTopic(merged);enriched++;}
+    }
+    return{enriched};
+  },
   // Export
   async exportAll(){const data={version:"worldforge-v5",exported:new Date().toISOString(),worlds:[],bibles:[],chats:[],topics:[],generalChats:[]};const ws=await this.listWorlds();for(const w of ws){data.worlds.push(w);data.bibles.push({wid:w.id,...(await this.getBible(w.id))});for(const asp of ASPECTS){const cs=await this.listChats(w.id,asp.id);for(const ch of cs){const f=await this.loadChat(w.id,asp.id,ch.id);if(f)data.chats.push(f);}const tps=await this.listTopics(w.id,asp.id);for(const t of tps)data.topics.push(t);}const wgc=await this.listChats(w.id,"__worldchat__");for(const ch of wgc){const f=await this.loadChat(w.id,"__worldchat__",ch.id);if(f)data.chats.push(f);}}const gc=await this.listGeneralChats();for(const ch of gc){const f=await this.loadChat("__general__","__general__",ch.id);if(f)data.generalChats.push(f);}return data;},
   async importAll(data){let ct={worlds:0,chats:0,topics:0};for(const w of data.worlds||[]){await IDB.set("world:"+w.id,w);ct.worlds++;}for(const b of data.bibles||[]){const wid=b.wid||b.world_id;if(wid)await IDB.set("bible:"+wid,b);}for(const c of data.chats||[]){await IDB.set("chat:"+c.world_id+":"+c.aspect_id+":"+c.id,c);ct.chats++;}for(const c of data.generalChats||[]){await IDB.set("chat:__general__:__general__:"+c.id,c);ct.chats++;}for(const t of data.topics||[]){await IDB.set("topic:"+t.world_id+":"+t.aspect_id+":"+t.id,t);ct.topics++;}return ct;},
@@ -530,126 +593,131 @@ function CardView({topic,viewYear,compiledLore,onRefreshLore,loadingLore}){
 // === Map Viewer (compact) ===
 function MapViewer({svgStr,pack,onSelectEntity}){
   const[zoom,setZoom]=useState(1);const[pan,setPan]=useState({x:0,y:0});const[drag,setDrag]=useState(false);const[ds,setDs]=useState({x:0,y:0});const[sb,setSb]=useState(null);
-  const[layers,setLayers]=useState({});const[showLayers,setShowLayers]=useState(false);
+  const[layers,setLayers]=useState({});const[sideTab,setSideTab]=useState("info");
   const containerRef=useRef(null);const mapRef=useRef(null);const sa=window.safeArr;
+  const zoomRef=useRef(1);const panRef=useRef({x:0,y:0});
+  zoomRef.current=zoom;panRef.current=pan;
 
-  // Detect layers from SVG after render
+  // Detect SVG layers after render
   useEffect(()=>{
     if(!mapRef.current)return;
     const svg=mapRef.current.querySelector('svg');if(!svg)return;
+    // Force SVG to fill and not have intrinsic size issues
+    svg.style.width='100%';svg.style.height='100%';svg.style.position='absolute';svg.style.top='0';svg.style.left='0';
+    svg.removeAttribute('width');svg.removeAttribute('height');
     const groups={};
-    svg.querySelectorAll(':scope > g, :scope > g > g').forEach(g=>{
-      const id=g.id;if(!id||id.length<2)return;
-      groups[id]={visible:g.style.display!=='none'&&g.getAttribute('display')!=='none',el:g};
-    });
+    const scanGroups=(parent,depth)=>{if(depth>2)return;
+      parent.querySelectorAll(':scope > g').forEach(g=>{
+        const id=g.id;if(!id||id.length<2)return;
+        groups[id]={visible:g.style.display!=='none'&&g.getAttribute('display')!=='none',el:g};
+      });};
+    scanGroups(svg,0);svg.querySelectorAll(':scope > g').forEach(g=>scanGroups(g,1));
     setLayers(groups);
+    // Center the map initially
+    const rect=containerRef.current?.getBoundingClientRect();
+    const vb=svg.getAttribute('viewBox');
+    if(rect&&vb){const parts=vb.split(/\s+/).map(Number);if(parts.length===4){
+      const[vx,vy,vw,vh]=parts;const scale=Math.min(rect.width/vw,rect.height/vh)*0.9;
+      const ox=(rect.width-vw*scale)/2;const oy=(rect.height-vh*scale)/2;
+      setZoom(scale);setPan({x:ox-vx*scale,y:oy-vy*scale});
+    }}
   },[svgStr]);
 
-  const toggleLayer=(id)=>{
-    setLayers(prev=>{const n={...prev};if(n[id]){n[id]={...n[id],visible:!n[id].visible};
-      if(n[id].el){n[id].el.style.display=n[id].visible?'':'none';}}return n;});
-  };
-
-  const applyPreset=(preset)=>{
-    const presets={
-      political:['ocean','lakes','coastline','rivers','borders','states','labels','icons','markers','routes','ruler'],
-      physical:['ocean','lakes','coastline','rivers','relief','texture','borders','labels','icons','markers'],
-      religious:['ocean','lakes','coastline','rivers','religions','borders','labels','icons'],
-      cultural:['ocean','lakes','coastline','rivers','cultures','borders','labels','icons'],
-      provinces:['ocean','lakes','coastline','rivers','provinces','borders','labels','icons'],
-      biomes:['ocean','lakes','coastline','rivers','biomes','labels','icons'],
-      heightmap:['ocean','lakes','coastline','heightmap','rivers'],
-      military:['ocean','lakes','coastline','rivers','borders','states','military','labels','icons'],
-      emblems:['ocean','lakes','coastline','borders','states','emblems','labels'],
-    };
+  const toggleLayer=id=>{setLayers(prev=>{const n={...prev};if(n[id]){n[id]={...n[id],visible:!n[id].visible};if(n[id].el)n[id].el.style.display=n[id].visible?'':'none';}return n;});};
+  const applyPreset=preset=>{
+    const presets={political:['ocean','lakes','coastline','rivers','borders','states','labels','icons','markers','routes','ruler'],physical:['ocean','lakes','coastline','rivers','relief','texture','borders','labels','icons','markers'],religious:['ocean','lakes','coastline','rivers','religions','borders','labels','icons'],cultural:['ocean','lakes','coastline','rivers','cultures','borders','labels','icons'],provinces:['ocean','lakes','coastline','rivers','provinces','borders','labels','icons'],biomes:['ocean','lakes','coastline','rivers','biomes','labels','icons'],heightmap:['ocean','lakes','coastline','heightmap','rivers'],military:['ocean','lakes','coastline','rivers','borders','states','military','labels','icons'],emblems:['ocean','lakes','coastline','borders','states','emblems','labels']};
     const show=presets[preset]||[];
-    setLayers(prev=>{const n={...prev};
-      Object.keys(n).forEach(id=>{const vis=show.length===0||show.some(s=>id.toLowerCase().includes(s));
-        n[id]={...n[id],visible:vis};if(n[id].el)n[id].el.style.display=vis?'':'none';});
-      return n;});
+    setLayers(prev=>{const n={...prev};Object.keys(n).forEach(id=>{const vis=show.length===0||show.some(s=>id.toLowerCase().includes(s));n[id]={...n[id],visible:vis};if(n[id].el)n[id].el.style.display=vis?'':'none';});return n;});
   };
 
-  // Zoom to cursor
-  const handleWheel=useCallback((e)=>{
-    e.preventDefault();
-    const factor=e.deltaY>0?0.9:1.1;
+  // Zoom to cursor with proper math
+  const handleWheel=useCallback(e=>{
+    e.preventDefault();e.stopPropagation();
+    const factor=e.deltaY<0?1.12:1/1.12;
     const rect=containerRef.current.getBoundingClientRect();
-    // Mouse position relative to container
     const mx=e.clientX-rect.left;
     const my=e.clientY-rect.top;
-    // Point on map under cursor before zoom
-    // map_point = (screen_point - pan) / zoom
-    setZoom(prevZoom=>{
-      const newZoom=Math.max(0.05,Math.min(15,prevZoom*factor));
-      // Adjust pan so the map point under cursor stays fixed
-      // new_pan = screen_point - map_point * new_zoom
-      // map_point = (screen_point - old_pan) / old_zoom
-      setPan(prevPan=>{
-        const mapX=(mx-prevPan.x)/prevZoom;
-        const mapY=(my-prevPan.y)/prevZoom;
-        return{x:mx-mapX*newZoom,y:my-mapY*newZoom};
-      });
-      return newZoom;
-    });
+    const oldZoom=zoomRef.current;const oldPan=panRef.current;
+    const newZoom=Math.max(0.02,Math.min(20,oldZoom*factor));
+    // Map point under cursor: (screen - pan) / zoom
+    const mapX=(mx-oldPan.x)/oldZoom;
+    const mapY=(my-oldPan.y)/oldZoom;
+    // New pan: screen - mapPoint * newZoom
+    const newPan={x:mx-mapX*newZoom,y:my-mapY*newZoom};
+    setZoom(newZoom);setPan(newPan);
   },[]);
 
   const handleClick=useCallback(e=>{let el=e.target;while(el&&el.tagName!=='svg'){const id=el.id||"";
-    if(id.match(/^state\d+/)){const n=parseInt((id.match(/\d+/)||[0])[0]);const s=sa(pack?.states)[n];if(s)setSb({type:"state",d:s,name:s.name||s.fullName});return;}
-    if(id.match(/^burg\d+/)){const n=parseInt((id.match(/\d+/)||[0])[0]);const b=sa(pack?.burgs)[n];if(b)setSb({type:"burg",d:b,name:b.name});return;}
+    if(id.match(/^state\d+/)){const n=parseInt((id.match(/\d+/)||[0])[0]);const s=sa(pack?.states)[n];if(s){setSb({type:"state",d:s,name:s.name||s.fullName});setSideTab("info");}return;}
+    if(id.match(/^burg\d+/)){const n=parseInt((id.match(/\d+/)||[0])[0]);const b=sa(pack?.burgs)[n];if(b){setSb({type:"burg",d:b,name:b.name});setSideTab("info");}return;}
     el=el.parentElement;}},[pack]);
 
-  const PRESETS=[["Political","political"],["Physical","physical"],["Religious","religious"],["Cultural","cultural"],["Provinces","provinces"],["Biomes","biomes"],["Heightmap","heightmap"],["Military","military"],["Emblems","emblems"],["All",null]];
+  const PRESETS=[["Political","political"],["Physical","physical"],["Religious","religious"],["Cultural","cultural"],["Provinces","provinces"],["Biomes","biomes"],["Heightmap","heightmap"],["Military","military"],["Emblems","emblems"],["Show All",null]];
   const layerIds=Object.keys(layers).sort();
 
   return(<div style={{display:"flex",height:"100%"}}>
-    {/* Map canvas */}
-    <div ref={containerRef} style={{flex:1,position:"relative",overflow:"hidden",background:"#e8ecf0",cursor:drag?"grabbing":"grab"}}
+    {/* Map canvas - overflow hidden, no scroll */}
+    <div ref={containerRef} style={{flex:1,position:"relative",overflow:"hidden",background:"#e8ecf0",cursor:drag?"grabbing":"grab",userSelect:"none"}}
       onWheel={handleWheel}
       onMouseDown={e=>{if(e.button===0){setDrag(true);setDs({x:e.clientX-pan.x,y:e.clientY-pan.y});}}}
       onMouseMove={e=>{if(drag)setPan({x:e.clientX-ds.x,y:e.clientY-ds.y});}}
       onMouseUp={()=>setDrag(false)} onMouseLeave={()=>setDrag(false)}>
+      {/* Map div - absolutely positioned, transformed */}
       <div ref={mapRef} className="map-container" onClick={handleClick}
-        style={{transform:"translate("+pan.x+"px,"+pan.y+"px) scale("+zoom+")",transformOrigin:"0 0",transition:drag?"none":"transform .05s"}}
+        style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",transform:"translate("+pan.x+"px,"+pan.y+"px) scale("+zoom+")",transformOrigin:"0 0",willChange:"transform"}}
         dangerouslySetInnerHTML={{__html:svgStr}}/>
-      {/* Controls */}
-      <div style={{position:"absolute",bottom:16,right:16,display:"flex",gap:6}}>
-        <Btn sm v="s" onClick={()=>setShowLayers(!showLayers)}>{showLayers?"✕ Layers":"☰ Layers"}</Btn>
-        <Btn sm v="s" onClick={()=>{const f=1.3;setZoom(z=>{const nz=Math.min(15,z*f);setPan(p=>{const cx=containerRef.current?.clientWidth/2||400;const cy=containerRef.current?.clientHeight/2||300;const mx=(cx-p.x)/z;const my=(cy-p.y)/z;return{x:cx-mx*nz,y:cy-my*nz};});return nz;});}}>+</Btn>
-        <Btn sm v="s" onClick={()=>{const f=1.3;setZoom(z=>{const nz=Math.max(.05,z/f);setPan(p=>{const cx=containerRef.current?.clientWidth/2||400;const cy=containerRef.current?.clientHeight/2||300;const mx=(cx-p.x)/z;const my=(cy-p.y)/z;return{x:cx-mx*nz,y:cy-my*nz};});return nz;});}}>−</Btn>
+      {/* Zoom controls */}
+      <div style={{position:"absolute",bottom:16,right:16,display:"flex",gap:6,zIndex:5}}>
+        <Btn sm v="s" onClick={()=>{const f=1.3;const rect=containerRef.current?.getBoundingClientRect();const cx=rect?rect.width/2:400;const cy=rect?rect.height/2:300;
+          const nz=Math.min(20,zoom*f);const mx=(cx-pan.x)/zoom;const my=(cy-pan.y)/zoom;
+          setZoom(nz);setPan({x:cx-mx*nz,y:cy-my*nz});}}>+</Btn>
+        <Btn sm v="s" onClick={()=>{const f=1.3;const rect=containerRef.current?.getBoundingClientRect();const cx=rect?rect.width/2:400;const cy=rect?rect.height/2:300;
+          const nz=Math.max(0.02,zoom/f);const mx=(cx-pan.x)/zoom;const my=(cy-pan.y)/zoom;
+          setZoom(nz);setPan({x:cx-mx*nz,y:cy-my*nz});}}>−</Btn>
         <Btn sm v="s" onClick={()=>{setZoom(1);setPan({x:0,y:0});}}>Reset</Btn>
       </div>
-      {/* Layer panel */}
-      {showLayers&&<div style={{position:"absolute",top:12,left:12,background:T.sf+"ee",border:"1px solid "+T.bd,borderRadius:10,padding:14,maxHeight:"80%",overflowY:"auto",width:200,backdropFilter:"blur(8px)"}}>
-        <div style={{fontSize:11,fontWeight:600,color:T.gold,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Layer Presets</div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:12}}>
-          {PRESETS.map(([label,key])=><button key={label} onClick={()=>key?applyPreset(key):applyPreset("all")}
-            style={{padding:"3px 8px",fontSize:10,background:T.sf2,border:"1px solid "+T.bd,borderRadius:4,color:T.txM,cursor:"pointer"}}
-            onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold}
-            onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>{label}</button>)}
-        </div>
-        <div style={{fontSize:11,fontWeight:600,color:T.gold,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Layers ({layerIds.length})</div>
-        {layerIds.map(id=>(
-          <label key={id} style={{display:"flex",alignItems:"center",gap:6,padding:"2px 0",cursor:"pointer",fontSize:12,color:layers[id]?.visible?T.txM:T.txD}}>
-            <input type="checkbox" checked={layers[id]?.visible||false} onChange={()=>toggleLayer(id)} style={{accentColor:T.gold}}/>
-            {id}
-          </label>
-        ))}
-      </div>}
     </div>
-    {/* Sidebar */}
-    <div style={{width:320,flexShrink:0,background:T.sf,borderLeft:"1px solid "+T.bd,overflowY:"auto",padding:20}}>
-      {!sb?<div style={{color:T.txD,fontSize:13,textAlign:"center",paddingTop:40}}>Click a state or settlement</div>
-      :<div>
-        {sb.d.coa&&<div style={{textAlign:"center",marginBottom:12}}><CoaImg coa={sb.d.coa} size={80}/></div>}
-        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,marginBottom:12}}>{sb.name}</div>
-        {sb.type==="state"&&<div>{[["Government",sb.d.form],["Pop",Math.round(((sb.d.rural||0)+(sb.d.urban||0))*1000).toLocaleString()],["Culture",sb.d.culture!==undefined?(sa(pack.cultures)[sb.d.culture]||{}).name:"?"],["Religion",sb.d.religion!==undefined&&pack.religions?(sa(pack.religions)[sb.d.religion]||{}).name:"?"]].map(([k,v],i)=>v&&v!=="?"?<div key={i} style={{marginBottom:6}}><div style={{fontSize:10,color:T.goldD,textTransform:"uppercase"}}>{k}</div><div style={{fontSize:13,color:T.txM}}>{v}</div></div>:null)}</div>}
-        {sb.type==="burg"&&<div>{[["State",sb.d.state?(sa(pack.states)[sb.d.state]||{}).name:"?"],["Pop",sb.d.population?Math.round(sb.d.population*1000).toLocaleString():"?"],["Features",[sb.d.capital?"Capital":"",sb.d.port?"Port":"",sb.d.citadel?"Citadel":"",sb.d.walls?"Walled":""].filter(Boolean).join(", ")||"None"]].map(([k,v],i)=>v?<div key={i} style={{marginBottom:6}}><div style={{fontSize:10,color:T.goldD,textTransform:"uppercase"}}>{k}</div><div style={{fontSize:13,color:T.txM}}>{v}</div></div>:null)}
-          {sb.d.coa&&<div style={{marginTop:8}}><CoaImg coa={sb.d.coa} size={60}/></div>}
-          {window.mfcgUrl(sb.d)&&<a href={window.mfcgUrl(sb.d)} target="_blank" rel="noopener" style={{display:"block",marginTop:8,fontSize:12,color:T.accent}}>🏘️ City Map</a>}
-        </div>}
-        <Btn sm v="a" style={{marginTop:12}} onClick={()=>{const aid=sb.type==="state"?"politics":"locations";const pre="azg-"+(sb.type==="state"?"state":"loc")+"-"+(sb.d.i||0);onSelectEntity(aid,pre);}}>View Card</Btn>
-      </div>}
-    </div></div>);
+    {/* Sidebar with tabs */}
+    <div style={{width:320,flexShrink:0,background:T.sf,borderLeft:"1px solid "+T.bd,display:"flex",flexDirection:"column"}}>
+      <div style={{display:"flex",borderBottom:"1px solid "+T.bd}}>
+        {["info","layers"].map(tab=><button key={tab} onClick={()=>setSideTab(tab)}
+          style={{flex:1,padding:"10px 0",background:"none",border:"none",borderBottom:sideTab===tab?"2px solid "+T.gold:"2px solid transparent",
+            color:sideTab===tab?T.gold:T.txD,fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,cursor:"pointer"}}>{tab}</button>)}
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:16}}>
+        {sideTab==="info"&&<>
+          {!sb?<div style={{color:T.txD,fontSize:13,textAlign:"center",paddingTop:30}}>Click a state or settlement on the map</div>
+          :<div>
+            {sb.d.coa&&<div style={{textAlign:"center",marginBottom:12}}><CoaImg coa={sb.d.coa} size={80}/></div>}
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:T.gold,marginBottom:10}}>{sb.name}</div>
+            {sb.type==="state"&&<div>{[["Government",sb.d.form],["Pop",Math.round(((sb.d.rural||0)+(sb.d.urban||0))*1000).toLocaleString()],["Culture",sb.d.culture!==undefined?(sa(pack.cultures)[sb.d.culture]||{}).name:"?"],["Religion",sb.d.religion!==undefined&&pack.religions?(sa(pack.religions)[sb.d.religion]||{}).name:"?"]].map(([k,v],i)=>v&&v!=="?"?<div key={i} style={{marginBottom:6}}><div style={{fontSize:10,color:T.goldD,textTransform:"uppercase"}}>{k}</div><div style={{fontSize:13,color:T.txM}}>{v}</div></div>:null)}</div>}
+            {sb.type==="burg"&&<div>{[["State",sb.d.state?(sa(pack.states)[sb.d.state]||{}).name:"?"],["Pop",sb.d.population?Math.round(sb.d.population*1000).toLocaleString():"?"],["Culture",sb.d.culture!==undefined?(sa(pack.cultures)[sb.d.culture]||{}).name:"?"],["Features",[sb.d.capital?"Capital":"",sb.d.port?"Port":"",sb.d.citadel?"Citadel":"",sb.d.walls?"Walled":"",sb.d.temple?"Temple":""].filter(Boolean).join(", ")||"None"]].map(([k,v],i)=>v&&v!=="?"?<div key={i} style={{marginBottom:6}}><div style={{fontSize:10,color:T.goldD,textTransform:"uppercase"}}>{k}</div><div style={{fontSize:13,color:T.txM}}>{v}</div></div>:null)}
+              {sb.d.coa&&<div style={{marginTop:8}}><CoaImg coa={sb.d.coa} size={60}/></div>}
+              {window.mfcgUrl(sb.d)&&<a href={window.mfcgUrl(sb.d)} target="_blank" rel="noopener" style={{display:"block",marginTop:8,fontSize:12,color:T.accent}}>🏘️ View City Map</a>}
+            </div>}
+            <Btn sm v="a" style={{marginTop:12}} onClick={()=>{const aid=sb.type==="state"?"politics":"locations";const pre="azg-"+(sb.type==="state"?"state":"loc")+"-"+(sb.d.i||0);onSelectEntity(aid,pre);}}>View Card</Btn>
+          </div>}
+        </>}
+        {sideTab==="layers"&&<>
+          <div style={{fontSize:11,fontWeight:600,color:T.gold,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Presets</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:16}}>
+            {PRESETS.map(([label,key])=><button key={label} onClick={()=>key?applyPreset(key):Object.keys(layers).forEach(id=>{setLayers(prev=>{const n={...prev};n[id]={...n[id],visible:true};if(n[id].el)n[id].el.style.display='';return n;});})}
+              style={{padding:"4px 10px",fontSize:11,background:T.sf2,border:"1px solid "+T.bd,borderRadius:4,color:T.txM,cursor:"pointer"}}
+              onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold}
+              onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>{label}</button>)}
+          </div>
+          <div style={{fontSize:11,fontWeight:600,color:T.gold,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Toggle Layers ({layerIds.length})</div>
+          {layerIds.map(id=>(
+            <label key={id} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",cursor:"pointer",fontSize:12,color:layers[id]?.visible?T.txM:T.txD}}>
+              <input type="checkbox" checked={layers[id]?.visible||false} onChange={()=>toggleLayer(id)} style={{accentColor:T.gold,width:14,height:14}}/>
+              <span>{id}</span>
+            </label>
+          ))}
+          {layerIds.length===0&&<div style={{color:T.txD,fontSize:12,paddingTop:12}}>No layers detected. Export your SVG from Azgaar with layers visible.</div>}
+        </>}
+      </div>
+    </div>
+  </div>);
 }
 
 // === MAIN APP ===
@@ -691,8 +759,8 @@ function App(){
 
   // File handlers
   const handleSvgFile=async e=>{const f=e.target.files[0];if(!f||!cW)return;setBusy(true);await db.saveMapSvg(cW.id,await f.text());await loadAspCounts(cW.id);flash("Map loaded!");setMod(null);setBusy(false);svgFileRef.current.value="";};
-  const handleJsonFile=async e=>{const f=e.target.files[0];if(!f||!cW)return;setBusy(true);flash("Parsing JSON...");const r=await db.importJsonExport(cW.id,await f.text());if(r.error)flash("Error: "+r.error);else{flash(r.added+" topics from "+r.total);await loadAspCounts(cW.id);setMod(null);}setBusy(false);jsonFileRef.current.value="";};
-  const handleMapFile=async e=>{const f=e.target.files[0];if(!f||!cW)return;setBusy(true);flash("Parsing .map...");const r=await db.importAzgaarMap(cW.id,await f.text());if(r.error)flash("Error: "+r.error);else{flash(r.added+" topics from "+r.total);const w=await IDB.get("world:"+cW.id);if(w){setCW(w);if(w.current_year)setViewYear(w.current_year);}await loadAspCounts(cW.id);setMod(null);}setBusy(false);mapFileRef.current.value="";};
+  const handleJsonFile=async e=>{const f=e.target.files[0];if(!f||!cW)return;setBusy(true);flash("Parsing JSON...");const r=await db.importJsonExport(cW.id,await f.text());if(r.error)flash("Error: "+r.error);else{flash(r.added+" topics imported. Enriching...");const er=await db.autoEnrichFromPack(cW.id);flash(r.added+" topics + "+er.enriched+" enriched. Bible auto-populated!");await loadAspCounts(cW.id);setMod(null);}setBusy(false);jsonFileRef.current.value="";};
+  const handleMapFile=async e=>{const f=e.target.files[0];if(!f||!cW)return;setBusy(true);flash("Parsing .map...");const r=await db.importAzgaarMap(cW.id,await f.text());if(r.error)flash("Error: "+r.error);else{await db.autoEnrichFromPack(cW.id);flash(r.added+" topics + Bible auto-populated!");const w=await IDB.get("world:"+cW.id);if(w){setCW(w);if(w.current_year)setViewYear(w.current_year);}await loadAspCounts(cW.id);setMod(null);}setBusy(false);mapFileRef.current.value="";};
 
   // Scan
   const scanAspect=async(wid,aspect,review)=>{const text=(await db.gatherAspectText(wid,aspect.id)+"\n"+await db.gatherAspectText(wid,"__worldchat__")).trim();if(!text)return{added:0};
