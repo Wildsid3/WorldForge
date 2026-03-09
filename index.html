@@ -815,6 +815,7 @@ function App(){
   const[cW,setCW]=useState(null);const[cA,setCA]=useState(null);const[cC,setCC]=useState(null);
   const[cList,setCList]=useState([]);const[topicList,setTopicList]=useState([]);const[curTopic,setCurTopic]=useState(null);
   const[compiledLore,setCompiledLore]=useState("");const[loadingLore,setLoadingLore]=useState(false);
+  const[sheet,setSheet]=useState("");
   const[inp,setInp]=useState("");const[busy,setBusy]=useState(false);const[toast,setToast]=useState("");
   const[gen,setGen]=useState(false);const[wc,setWc]=useState(false);
   const[impTxt,setImpTxt]=useState("");const[mod,setMod]=useState(null);const[modIn,setModIn]=useState("");const[modIn2,setModIn2]=useState("");const[modIn3,setModIn3]=useState("");
@@ -868,6 +869,12 @@ function App(){
       else{await db.saveTopic({id:mkId(),name:p.name,brief:p.brief||"",template:TMPL_FOR[cA.id]||"culture",tags:normTags(p.tags||[]),hist_type:p.hist_type||"general",born_year:p.year||null,died_year:null,timeline:p.year?[{year:p.year,event:p.brief||p.name}]:[],fields:{},aspect_id:cA.id,world_id:cW.id,created:new Date().toISOString(),updated:new Date().toISOString()});added++;}}
     setTopicList(await db.listTopics(cW.id,cA.id));await loadAspCounts(cW.id);flash("+"+added);setMod(null);setScanResults(null);};
   const scanAll=async()=>{if(!cW)return;setBusy(true);let total=0;for(const a of ASPECTS){setScanNotif("Scanning "+a.name+"...");const r=await scanAspect(cW.id,a,false);total+=r.added||0;}await loadAspCounts(cW.id);setScanNotif("");setBusy(false);flash("Done: +"+total);};
+  const doSheet=async(name)=>{setBusy(true);setScr("charsheet");
+    const text=await db.gatherAspectText(cW.id,"characters");const bible=await db.getBible(cW.id);
+    const sys="Create a Baldur's Gate style character sheet for \""+name+"\" in \""+cW.name+"\". Use ONLY conversation data. For unknowns write \"Unknown\". Include: Name, Race, Class, Alignment, Level, Stats, Background, Traits, Abilities, Equipment, Relationships, Description, Notes.";
+    const resp=await aiCall(sys,[{role:"user",content:"Bible: "+JSON.stringify(bible.facts)+"\n\nConversations:\n"+text.slice(0,6000)}],1024);
+    setSheet(resp);setBusy(false);
+  };
   const exitChat=async()=>{const pa=cA,pw=cW;if(!gen&&!wc&&pw&&pa&&cC?.messages?.length>1){setScanNotif("Auto-scanning...");setTimeout(async()=>{await scanAspect(pw.id,pa,false);await loadAspCounts(pw.id);setScanNotif("Done");setTimeout(()=>setScanNotif(""),2000);},100);}setCC(null);setScr(gen?"general":(wc?"worldchatlist":"aspect"));};
   const compileLore=async()=>{if(!curTopic||!cW)return;setLoadingLore(true);const all=await db.gatherAllText(cW.id);const resp=await aiCall(window.buildLorePrompt(curTopic.name,cW.name),[{role:"user",content:all.slice(0,15000)}],2048);setCompiledLore(resp);setLoadingLore(false);};
 
@@ -984,8 +991,12 @@ function App(){
     </div></>);
 
   if(scr==="card"&&curTopic)return S(<><div style={{padding:"14px 32px 10px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("aspect")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold}}>{curTopic.name}</div><div style={{fontSize:11,color:T.txD}}>{cA?.name+" · "+cW?.name}</div></div>
-    <DateBar/><div style={{display:"flex",gap:6,marginLeft:8}}><Btn sm v="s" onClick={()=>{setModIn("");setModIn2("");setMod({t:"addTL"});}}>📅+</Btn><Btn sm v="s" onClick={()=>{setTagInput("");setMod({t:"addTag"});}}>🏷️</Btn><Btn sm v="d" onClick={async()=>{await db.deleteTopic(cW.id,cA.id,curTopic.id);setTopicList(await db.listTopics(cW.id,cA.id));flash("Deleted");setScr("aspect");}}>Del</Btn></div></div>
+    <DateBar/><div style={{display:"flex",gap:6,marginLeft:8}}>{cA?.id==="characters"&&<Btn sm v="a" onClick={()=>doSheet(curTopic.name)}>🎭 Sheet</Btn>}<Btn sm v="s" onClick={()=>{setModIn("");setModIn2("");setMod({t:"addTL"});}}>📅+</Btn><Btn sm v="s" onClick={()=>{setTagInput("");setMod({t:"addTag"});}}>🏷️</Btn><Btn sm v="d" onClick={async()=>{await db.deleteTopic(cW.id,cA.id,curTopic.id);setTopicList(await db.listTopics(cW.id,cA.id));flash("Deleted");setScr("aspect");}}>Del</Btn></div></div>
     <div style={{flex:1,overflowY:"auto",padding:"16px 32px"}}><div style={{maxWidth:820,margin:"0 auto"}}><CardView topic={curTopic} viewYear={viewYear} compiledLore={compiledLore} onRefreshLore={compileLore} loadingLore={loadingLore}/></div></div></>);
+
+  if(scr==="charsheet")return S(<><div style={{padding:"14px 32px 10px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("card")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold}}>Character Sheet</div><div style={{fontSize:11,color:T.txD}}>{cW?.name}</div></div></div>
+    {busy?<div style={{padding:40,textAlign:"center",color:T.txD}}>Generating...</div>
+    :<div style={{flex:1,overflowY:"auto",padding:"16px 32px"}}><div style={{maxWidth:820,margin:"0 auto",fontFamily:"monospace",fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap",background:T.sf,padding:24,borderRadius:10,border:"1px solid "+T.bd,color:T.tx}}>{sheet}</div></div>}</>);
 
   if(scr==="chatlist")return S(<><div style={{padding:"14px 32px 10px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("aspect")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,flex:1}}>Chats</div></div><div style={{flex:1,overflowY:"auto",padding:"16px 32px",maxWidth:700}}>{cList.map(c=><button key={c.id} onClick={()=>goChat(c)} style={{display:"block",width:"100%",padding:"12px 14px",marginBottom:6,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontSize:14,fontWeight:500}}>{c.title}</div><div style={{fontSize:11,color:T.txD,marginTop:3}}>{new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" msgs"}</div></button>)}</div></>);
 
