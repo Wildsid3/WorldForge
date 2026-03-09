@@ -611,6 +611,9 @@ function MapViewer({svgStr,pack,onSelectEntity}){
         groups[id]={visible:g.style.display!=='none'&&g.getAttribute('display')!=='none',el:g};
       });};
     scanGroups(svg,0);svg.querySelectorAll(':scope > g').forEach(g=>scanGroups(g,1));
+    // Apply default visible layers
+    const defaultOn=new Set(['rivers','regions','borders','routes','ice','icons','labels','vignette','ocean','lakes','landmass','coastline']);
+    Object.keys(groups).forEach(id=>{const vis=defaultOn.has(id);groups[id].visible=vis;if(groups[id].el)groups[id].el.style.display=vis?'':'none';});
     setLayers(groups);
     const raw=svg.getAttribute('viewBox');
     if(raw){const p=raw.split(/[\s,]+/).map(Number);if(p.length===4){
@@ -629,42 +632,34 @@ function MapViewer({svgStr,pack,onSelectEntity}){
 
   const toggleLayer=id=>{setLayers(prev=>{const n={...prev};if(n[id]){n[id]={...n[id],visible:!n[id].visible};if(n[id].el)n[id].el.style.display=n[id].visible?'':'none';}return n;});};
 
-  // Preset layer mapping — maps preset names to actual Azgaar SVG layer IDs
-  const LAYER_ALIASES={
-    'states':['regions','states','terrs'],
-    'religions':['relig','religions'],
-    'cultures':['cults','cultures'],
-    'provinces':['provs','provinces'],
-    'relief':['terrs','terrain','relief','landmass'],
-    'texture':['texture','terrs','landmass'],
-    'heightmap':['terrs','heightmap','landmass'],
-    'military':['armies','military'],
-  };
+  // Presets using exact Azgaar SVG layer IDs
   const applyPreset=preset=>{
     const presets={
-      political:['ocean','lakes','coastline','rivers','borders','states','labels','icons','markers','routes','ruler','zones','terrs','landmass','regions'],
-      physical:['ocean','lakes','coastline','rivers','relief','texture','borders','labels','icons','markers','terrs','landmass'],
-      religious:['ocean','lakes','coastline','rivers','religions','borders','labels','icons','terrs','landmass'],
-      cultural:['ocean','lakes','coastline','rivers','cultures','borders','labels','icons','terrs','landmass'],
-      provinces:['ocean','lakes','coastline','rivers','provinces','borders','labels','icons','terrs','landmass'],
-      biomes:['ocean','lakes','coastline','rivers','biomes','labels','icons','landmass'],
-      heightmap:['ocean','lakes','coastline','heightmap','rivers','terrs','landmass'],
-      military:['ocean','lakes','coastline','rivers','borders','states','military','labels','icons','terrs','landmass','regions','armies'],
-      emblems:['ocean','lakes','coastline','borders','states','emblems','labels','terrs','landmass','regions']
+      political:['ocean','lakes','landmass','coastline','rivers','borders','regions','labels','icons','markers','routes','zones','terrs'],
+      physical:['ocean','lakes','landmass','coastline','rivers','borders','labels','icons','markers','terrs'],
+      religious:['ocean','lakes','landmass','coastline','rivers','relig','borders','labels','icons'],
+      cultural:['ocean','lakes','landmass','coastline','rivers','cults','borders','labels','icons'],
+      provinces:['ocean','lakes','landmass','coastline','rivers','provs','borders','labels','icons'],
+      biomes:['ocean','lakes','landmass','coastline','rivers','biomes','labels','icons'],
+      heightmap:['ocean','lakes','landmass','coastline','rivers','terrs'],
+      military:['ocean','lakes','landmass','coastline','rivers','borders','regions','armies','labels','icons'],
+      emblems:['ocean','lakes','landmass','coastline','borders','regions','emblems','labels']
     };
-    const show=presets[preset]||[];
-    // Expand aliases so preset names match actual SVG layer IDs
-    const expanded=new Set();
-    show.forEach(s=>{expanded.add(s.toLowerCase());const aliases=LAYER_ALIASES[s];if(aliases)aliases.forEach(a=>expanded.add(a.toLowerCase()));});
+    const show=new Set(presets[preset]||[]);
     setLayers(prev=>{const n={...prev};Object.keys(n).forEach(id=>{
-      const lid=id.toLowerCase();
-      const vis=show.length===0||expanded.has(lid)||[...expanded].some(s=>lid.includes(s)||s.includes(lid));
+      const vis=show.size===0||show.has(id);
       n[id]={...n[id],visible:vis};if(n[id].el)n[id].el.style.display=vis?'':'none';
     });return n;});
   };
 
   // Zoom via viewBox — keeps SVG vector-sharp at all zoom levels
-  const handleWheel=useCallback(e=>{
+  // Must attach with passive:false or browser blocks preventDefault
+  useEffect(()=>{
+    const el=containerRef.current;if(!el)return;
+    el.addEventListener('wheel',handleWheelFn,{passive:false});
+    return ()=>el.removeEventListener('wheel',handleWheelFn);
+  });
+  function handleWheelFn(e){
     e.preventDefault();e.stopPropagation();
     const cv=vbRef.current;if(!cv||!origVb.current)return;
     const factor=e.deltaY<0?0.85:1/0.85;
@@ -683,7 +678,7 @@ function MapViewer({svgStr,pack,onSelectEntity}){
     const nx=svgX-nw*fx;
     const ny=svgY-nh*fy;
     setVb({x:nx,y:ny,w:nw,h:nh});
-  },[]);
+  }
 
   const handleClick=useCallback(e=>{let el=e.target;while(el&&el.tagName!=='svg'){const id=el.id||"";
     if(id.match(/^state\d+/)){const n=parseInt((id.match(/\d+/)||[0])[0]);const s=sa(pack?.states)[n];if(s){setSb({type:"state",d:s,name:s.name||s.fullName});setSideTab("info");}return;}
@@ -736,7 +731,6 @@ function MapViewer({svgStr,pack,onSelectEntity}){
   return(<div style={{display:"flex",height:"100%"}}>
     {/* Map canvas */}
     <div ref={containerRef} style={{flex:1,position:"relative",overflow:"hidden",background:"#e8ecf0",cursor:drag?"grabbing":"grab",userSelect:"none",touchAction:"none"}}
-      onWheel={handleWheel}
       onMouseDown={startDrag} onMouseMove={onDrag} onMouseUp={endDrag} onMouseLeave={endDrag}
       onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={endDrag}>
       <div ref={mapRef} className="map-container" onClick={handleClick}
