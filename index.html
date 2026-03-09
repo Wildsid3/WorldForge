@@ -607,8 +607,12 @@ function MapViewer({svgStr,pack,onSelectEntity}){
   useEffect(()=>{
     if(!mapRef.current)return;
     const svg=mapRef.current.querySelector('svg');if(!svg)return;
-    svg.removeAttribute('width');svg.removeAttribute('height');
-    svg.style.width='100%';svg.style.height='100%';
+    // Set SVG to its native viewBox pixel dimensions — CSS transform handles scaling
+    const vb=svg.getAttribute('viewBox');
+    let vw=1920,vh=937;
+    if(vb){const p=vb.split(/[\s,]+/).map(Number);if(p.length===4){vw=p[2];vh=p[3];}}
+    svg.setAttribute('width',vw);svg.setAttribute('height',vh);
+    svg.style.width=vw+'px';svg.style.height=vh+'px';svg.style.display='block';
     const groups={};
     const scanGroups=(parent,depth)=>{if(depth>2)return;
       parent.querySelectorAll(':scope > g').forEach(g=>{
@@ -622,15 +626,13 @@ function MapViewer({svgStr,pack,onSelectEntity}){
       else{const vis=DEFAULT_ON.has(id);groups[id].visible=vis;groups[id].el.style.display=vis?'':'none';}
     });
     setLayers(groups);
-    // Center map
+    // Center map using already-parsed viewBox dimensions
     const rect=containerRef.current?.getBoundingClientRect();
-    const vb=svg.getAttribute('viewBox');
-    if(rect&&vb){const p=vb.split(/[\s,]+/).map(Number);if(p.length===4){
-      const[vx,vy,vw,vh]=p;const s=Math.min(rect.width/vw,rect.height/vh)*0.9;
+    if(rect){const s=Math.min(rect.width/vw,rect.height/vh)*0.9;
       const ox=(rect.width-vw*s)/2;const oy=(rect.height-vh*s)/2;
-      setZoom(s);setPan({x:ox-vx*s,y:oy-vy*s});
-      zRef.current=s;pRef.current={x:ox-vx*s,y:oy-vy*s};
-    }}
+      setZoom(s);setPan({x:ox,y:oy});
+      zRef.current=s;pRef.current={x:ox,y:oy};
+    }
   },[svgStr]);
 
   // Toggle — never toggle always-on layers
@@ -757,12 +759,11 @@ function MapViewer({svgStr,pack,onSelectEntity}){
         <Btn sm v="s" onClick={()=>zoomBtn(1/1.4)}>−</Btn>
         <Btn sm v="s" onClick={()=>{
           const svg=mapRef.current?.querySelector('svg');const rect=containerRef.current?.getBoundingClientRect();
-          if(!svg||!rect)return;const vb=svg.getAttribute('viewBox');
-          if(vb){const p=vb.split(/[\s,]+/).map(Number);if(p.length===4){
-            const[vx,vy,vw,vh]=p;const s=Math.min(rect.width/vw,rect.height/vh)*0.9;
-            const ox=(rect.width-vw*s)/2;const oy=(rect.height-vh*s)/2;
-            setZoom(s);setPan({x:ox-vx*s,y:oy-vy*s});zRef.current=s;pRef.current={x:ox-vx*s,y:oy-vy*s};
-          }}
+          if(!svg||!rect)return;
+          const w=svg.getAttribute('width')||1920;const h=svg.getAttribute('height')||937;
+          const s=Math.min(rect.width/w,rect.height/h)*0.9;
+          const ox=(rect.width-w*s)/2;const oy=(rect.height-h*s)/2;
+          setZoom(s);setPan({x:ox,y:oy});zRef.current=s;pRef.current={x:ox,y:oy};
         }}>Reset</Btn>
       </div>
     </div>
