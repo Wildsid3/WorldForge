@@ -530,18 +530,113 @@ function CardView({topic,viewYear,compiledLore,onRefreshLore,loadingLore}){
 // === Map Viewer (compact) ===
 function MapViewer({svgStr,pack,onSelectEntity}){
   const[zoom,setZoom]=useState(1);const[pan,setPan]=useState({x:0,y:0});const[drag,setDrag]=useState(false);const[ds,setDs]=useState({x:0,y:0});const[sb,setSb]=useState(null);
-  const sa=window.safeArr;
+  const[layers,setLayers]=useState({});const[showLayers,setShowLayers]=useState(false);
+  const containerRef=useRef(null);const mapRef=useRef(null);const sa=window.safeArr;
+
+  // Detect layers from SVG after render
+  useEffect(()=>{
+    if(!mapRef.current)return;
+    const svg=mapRef.current.querySelector('svg');if(!svg)return;
+    const groups={};
+    svg.querySelectorAll(':scope > g, :scope > g > g').forEach(g=>{
+      const id=g.id;if(!id||id.length<2)return;
+      groups[id]={visible:g.style.display!=='none'&&g.getAttribute('display')!=='none',el:g};
+    });
+    setLayers(groups);
+  },[svgStr]);
+
+  const toggleLayer=(id)=>{
+    setLayers(prev=>{const n={...prev};if(n[id]){n[id]={...n[id],visible:!n[id].visible};
+      if(n[id].el){n[id].el.style.display=n[id].visible?'':'none';}}return n;});
+  };
+
+  const applyPreset=(preset)=>{
+    const presets={
+      political:['ocean','lakes','coastline','rivers','borders','states','labels','icons','markers','routes','ruler'],
+      physical:['ocean','lakes','coastline','rivers','relief','texture','borders','labels','icons','markers'],
+      religious:['ocean','lakes','coastline','rivers','religions','borders','labels','icons'],
+      cultural:['ocean','lakes','coastline','rivers','cultures','borders','labels','icons'],
+      provinces:['ocean','lakes','coastline','rivers','provinces','borders','labels','icons'],
+      biomes:['ocean','lakes','coastline','rivers','biomes','labels','icons'],
+      heightmap:['ocean','lakes','coastline','heightmap','rivers'],
+      military:['ocean','lakes','coastline','rivers','borders','states','military','labels','icons'],
+      emblems:['ocean','lakes','coastline','borders','states','emblems','labels'],
+    };
+    const show=presets[preset]||[];
+    setLayers(prev=>{const n={...prev};
+      Object.keys(n).forEach(id=>{const vis=show.length===0||show.some(s=>id.toLowerCase().includes(s));
+        n[id]={...n[id],visible:vis};if(n[id].el)n[id].el.style.display=vis?'':'none';});
+      return n;});
+  };
+
+  // Zoom to cursor
+  const handleWheel=useCallback((e)=>{
+    e.preventDefault();
+    const factor=e.deltaY>0?0.9:1.1;
+    const rect=containerRef.current.getBoundingClientRect();
+    // Mouse position relative to container
+    const mx=e.clientX-rect.left;
+    const my=e.clientY-rect.top;
+    // Point on map under cursor before zoom
+    // map_point = (screen_point - pan) / zoom
+    setZoom(prevZoom=>{
+      const newZoom=Math.max(0.05,Math.min(15,prevZoom*factor));
+      // Adjust pan so the map point under cursor stays fixed
+      // new_pan = screen_point - map_point * new_zoom
+      // map_point = (screen_point - old_pan) / old_zoom
+      setPan(prevPan=>{
+        const mapX=(mx-prevPan.x)/prevZoom;
+        const mapY=(my-prevPan.y)/prevZoom;
+        return{x:mx-mapX*newZoom,y:my-mapY*newZoom};
+      });
+      return newZoom;
+    });
+  },[]);
+
   const handleClick=useCallback(e=>{let el=e.target;while(el&&el.tagName!=='svg'){const id=el.id||"";
     if(id.match(/^state\d+/)){const n=parseInt((id.match(/\d+/)||[0])[0]);const s=sa(pack?.states)[n];if(s)setSb({type:"state",d:s,name:s.name||s.fullName});return;}
     if(id.match(/^burg\d+/)){const n=parseInt((id.match(/\d+/)||[0])[0]);const b=sa(pack?.burgs)[n];if(b)setSb({type:"burg",d:b,name:b.name});return;}
     el=el.parentElement;}},[pack]);
+
+  const PRESETS=[["Political","political"],["Physical","physical"],["Religious","religious"],["Cultural","cultural"],["Provinces","provinces"],["Biomes","biomes"],["Heightmap","heightmap"],["Military","military"],["Emblems","emblems"],["All",null]];
+  const layerIds=Object.keys(layers).sort();
+
   return(<div style={{display:"flex",height:"100%"}}>
-    <div style={{flex:1,position:"relative",overflow:"hidden",background:"#e8ecf0",cursor:drag?"grabbing":"grab"}}
-      onWheel={e=>{e.preventDefault();setZoom(z=>Math.max(.1,Math.min(10,z*(e.deltaY>0?.9:1.1))));}}
-      onMouseDown={e=>{setDrag(true);setDs({x:e.clientX-pan.x,y:e.clientY-pan.y});}}
-      onMouseMove={e=>{if(drag)setPan({x:e.clientX-ds.x,y:e.clientY-ds.y});}} onMouseUp={()=>setDrag(false)} onMouseLeave={()=>setDrag(false)}>
-      <div className="map-container" onClick={handleClick} style={{transform:"translate("+pan.x+"px,"+pan.y+"px) scale("+zoom+")",transformOrigin:"0 0",transition:drag?"none":"transform .1s"}} dangerouslySetInnerHTML={{__html:svgStr}}/>
-      <div style={{position:"absolute",bottom:16,right:16,display:"flex",gap:8}}><Btn sm v="s" onClick={()=>setZoom(z=>Math.min(10,z*1.3))}>+</Btn><Btn sm v="s" onClick={()=>setZoom(z=>Math.max(.1,z/1.3))}>−</Btn><Btn sm v="s" onClick={()=>{setZoom(1);setPan({x:0,y:0});}}>Reset</Btn></div></div>
+    {/* Map canvas */}
+    <div ref={containerRef} style={{flex:1,position:"relative",overflow:"hidden",background:"#e8ecf0",cursor:drag?"grabbing":"grab"}}
+      onWheel={handleWheel}
+      onMouseDown={e=>{if(e.button===0){setDrag(true);setDs({x:e.clientX-pan.x,y:e.clientY-pan.y});}}}
+      onMouseMove={e=>{if(drag)setPan({x:e.clientX-ds.x,y:e.clientY-ds.y});}}
+      onMouseUp={()=>setDrag(false)} onMouseLeave={()=>setDrag(false)}>
+      <div ref={mapRef} className="map-container" onClick={handleClick}
+        style={{transform:"translate("+pan.x+"px,"+pan.y+"px) scale("+zoom+")",transformOrigin:"0 0",transition:drag?"none":"transform .05s"}}
+        dangerouslySetInnerHTML={{__html:svgStr}}/>
+      {/* Controls */}
+      <div style={{position:"absolute",bottom:16,right:16,display:"flex",gap:6}}>
+        <Btn sm v="s" onClick={()=>setShowLayers(!showLayers)}>{showLayers?"✕ Layers":"☰ Layers"}</Btn>
+        <Btn sm v="s" onClick={()=>{const f=1.3;setZoom(z=>{const nz=Math.min(15,z*f);setPan(p=>{const cx=containerRef.current?.clientWidth/2||400;const cy=containerRef.current?.clientHeight/2||300;const mx=(cx-p.x)/z;const my=(cy-p.y)/z;return{x:cx-mx*nz,y:cy-my*nz};});return nz;});}}>+</Btn>
+        <Btn sm v="s" onClick={()=>{const f=1.3;setZoom(z=>{const nz=Math.max(.05,z/f);setPan(p=>{const cx=containerRef.current?.clientWidth/2||400;const cy=containerRef.current?.clientHeight/2||300;const mx=(cx-p.x)/z;const my=(cy-p.y)/z;return{x:cx-mx*nz,y:cy-my*nz};});return nz;});}}>−</Btn>
+        <Btn sm v="s" onClick={()=>{setZoom(1);setPan({x:0,y:0});}}>Reset</Btn>
+      </div>
+      {/* Layer panel */}
+      {showLayers&&<div style={{position:"absolute",top:12,left:12,background:T.sf+"ee",border:"1px solid "+T.bd,borderRadius:10,padding:14,maxHeight:"80%",overflowY:"auto",width:200,backdropFilter:"blur(8px)"}}>
+        <div style={{fontSize:11,fontWeight:600,color:T.gold,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Layer Presets</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:12}}>
+          {PRESETS.map(([label,key])=><button key={label} onClick={()=>key?applyPreset(key):applyPreset("all")}
+            style={{padding:"3px 8px",fontSize:10,background:T.sf2,border:"1px solid "+T.bd,borderRadius:4,color:T.txM,cursor:"pointer"}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold}
+            onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>{label}</button>)}
+        </div>
+        <div style={{fontSize:11,fontWeight:600,color:T.gold,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Layers ({layerIds.length})</div>
+        {layerIds.map(id=>(
+          <label key={id} style={{display:"flex",alignItems:"center",gap:6,padding:"2px 0",cursor:"pointer",fontSize:12,color:layers[id]?.visible?T.txM:T.txD}}>
+            <input type="checkbox" checked={layers[id]?.visible||false} onChange={()=>toggleLayer(id)} style={{accentColor:T.gold}}/>
+            {id}
+          </label>
+        ))}
+      </div>}
+    </div>
+    {/* Sidebar */}
     <div style={{width:320,flexShrink:0,background:T.sf,borderLeft:"1px solid "+T.bd,overflowY:"auto",padding:20}}>
       {!sb?<div style={{color:T.txD,fontSize:13,textAlign:"center",paddingTop:40}}>Click a state or settlement</div>
       :<div>
