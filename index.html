@@ -592,17 +592,16 @@ function CardView({topic,viewYear,compiledLore,onRefreshLore,loadingLore}){
 
 // === Map Viewer (compact) ===
 function MapViewer({svgStr,pack,onSelectEntity}){
-  const[zoom,setZoom]=useState(1);const[pan,setPan]=useState({x:0,y:0});const[drag,setDrag]=useState(false);const[ds,setDs]=useState({x:0,y:0});const[sb,setSb]=useState(null);
+  const[vb,setVb]=useState(null);const origVb=useRef(null);
+  const[drag,setDrag]=useState(false);const[ds,setDs]=useState({x:0,y:0});const[sb,setSb]=useState(null);
   const[layers,setLayers]=useState({});const[sideTab,setSideTab]=useState("info");
   const containerRef=useRef(null);const mapRef=useRef(null);const sa=window.safeArr;
-  const zoomRef=useRef(1);const panRef=useRef({x:0,y:0});
-  zoomRef.current=zoom;panRef.current=pan;
+  const vbRef=useRef(null);
 
-  // Detect SVG layers after render
+  // Detect SVG layers and init viewBox
   useEffect(()=>{
     if(!mapRef.current)return;
     const svg=mapRef.current.querySelector('svg');if(!svg)return;
-    // Force SVG to fill and not have intrinsic size issues
     svg.style.width='100%';svg.style.height='100%';svg.style.position='absolute';svg.style.top='0';svg.style.left='0';
     svg.removeAttribute('width');svg.removeAttribute('height');
     const groups={};
@@ -613,38 +612,77 @@ function MapViewer({svgStr,pack,onSelectEntity}){
       });};
     scanGroups(svg,0);svg.querySelectorAll(':scope > g').forEach(g=>scanGroups(g,1));
     setLayers(groups);
-    // Center the map initially
-    const rect=containerRef.current?.getBoundingClientRect();
-    const vb=svg.getAttribute('viewBox');
-    if(rect&&vb){const parts=vb.split(/\s+/).map(Number);if(parts.length===4){
-      const[vx,vy,vw,vh]=parts;const scale=Math.min(rect.width/vw,rect.height/vh)*0.9;
-      const ox=(rect.width-vw*scale)/2;const oy=(rect.height-vh*scale)/2;
-      setZoom(scale);setPan({x:ox-vx*scale,y:oy-vy*scale});
+    const raw=svg.getAttribute('viewBox');
+    if(raw){const p=raw.split(/[\s,]+/).map(Number);if(p.length===4){
+      const o={x:p[0],y:p[1],w:p[2],h:p[3]};
+      origVb.current=o;setVb(o);vbRef.current=o;
     }}
   },[svgStr]);
 
+  // Apply viewBox to SVG element whenever it changes
+  useEffect(()=>{
+    if(!vb||!mapRef.current)return;
+    const svg=mapRef.current.querySelector('svg');if(!svg)return;
+    svg.setAttribute('viewBox',vb.x+' '+vb.y+' '+vb.w+' '+vb.h);
+    vbRef.current=vb;
+  },[vb]);
+
   const toggleLayer=id=>{setLayers(prev=>{const n={...prev};if(n[id]){n[id]={...n[id],visible:!n[id].visible};if(n[id].el)n[id].el.style.display=n[id].visible?'':'none';}return n;});};
+
+  // Preset layer mapping — maps preset names to actual Azgaar SVG layer IDs
+  const LAYER_ALIASES={
+    'states':['regions','states','terrs'],
+    'religions':['relig','religions'],
+    'cultures':['cults','cultures'],
+    'provinces':['provs','provinces'],
+    'relief':['terrs','terrain','relief','landmass'],
+    'texture':['texture','terrs','landmass'],
+    'heightmap':['terrs','heightmap','landmass'],
+    'military':['armies','military'],
+  };
   const applyPreset=preset=>{
-    const presets={political:['ocean','lakes','coastline','rivers','borders','states','labels','icons','markers','routes','ruler'],physical:['ocean','lakes','coastline','rivers','relief','texture','borders','labels','icons','markers'],religious:['ocean','lakes','coastline','rivers','religions','borders','labels','icons'],cultural:['ocean','lakes','coastline','rivers','cultures','borders','labels','icons'],provinces:['ocean','lakes','coastline','rivers','provinces','borders','labels','icons'],biomes:['ocean','lakes','coastline','rivers','biomes','labels','icons'],heightmap:['ocean','lakes','coastline','heightmap','rivers'],military:['ocean','lakes','coastline','rivers','borders','states','military','labels','icons'],emblems:['ocean','lakes','coastline','borders','states','emblems','labels']};
+    const presets={
+      political:['ocean','lakes','coastline','rivers','borders','states','labels','icons','markers','routes','ruler','zones','terrs','landmass','regions'],
+      physical:['ocean','lakes','coastline','rivers','relief','texture','borders','labels','icons','markers','terrs','landmass'],
+      religious:['ocean','lakes','coastline','rivers','religions','borders','labels','icons','terrs','landmass'],
+      cultural:['ocean','lakes','coastline','rivers','cultures','borders','labels','icons','terrs','landmass'],
+      provinces:['ocean','lakes','coastline','rivers','provinces','borders','labels','icons','terrs','landmass'],
+      biomes:['ocean','lakes','coastline','rivers','biomes','labels','icons','landmass'],
+      heightmap:['ocean','lakes','coastline','heightmap','rivers','terrs','landmass'],
+      military:['ocean','lakes','coastline','rivers','borders','states','military','labels','icons','terrs','landmass','regions','armies'],
+      emblems:['ocean','lakes','coastline','borders','states','emblems','labels','terrs','landmass','regions']
+    };
     const show=presets[preset]||[];
-    setLayers(prev=>{const n={...prev};Object.keys(n).forEach(id=>{const vis=show.length===0||show.some(s=>id.toLowerCase().includes(s));n[id]={...n[id],visible:vis};if(n[id].el)n[id].el.style.display=vis?'':'none';});return n;});
+    // Expand aliases so preset names match actual SVG layer IDs
+    const expanded=new Set();
+    show.forEach(s=>{expanded.add(s.toLowerCase());const aliases=LAYER_ALIASES[s];if(aliases)aliases.forEach(a=>expanded.add(a.toLowerCase()));});
+    setLayers(prev=>{const n={...prev};Object.keys(n).forEach(id=>{
+      const lid=id.toLowerCase();
+      const vis=show.length===0||expanded.has(lid)||[...expanded].some(s=>lid.includes(s)||s.includes(lid));
+      n[id]={...n[id],visible:vis};if(n[id].el)n[id].el.style.display=vis?'':'none';
+    });return n;});
   };
 
-  // Zoom to cursor with proper math
+  // Zoom via viewBox — keeps SVG vector-sharp at all zoom levels
   const handleWheel=useCallback(e=>{
     e.preventDefault();e.stopPropagation();
-    const factor=e.deltaY<0?1.12:1/1.12;
+    const cv=vbRef.current;if(!cv||!origVb.current)return;
+    const factor=e.deltaY<0?0.85:1/0.85;
     const rect=containerRef.current.getBoundingClientRect();
-    const mx=e.clientX-rect.left;
-    const my=e.clientY-rect.top;
-    const oldZoom=zoomRef.current;const oldPan=panRef.current;
-    const newZoom=Math.max(0.02,Math.min(20,oldZoom*factor));
-    // Map point under cursor: (screen - pan) / zoom
-    const mapX=(mx-oldPan.x)/oldZoom;
-    const mapY=(my-oldPan.y)/oldZoom;
-    // New pan: screen - mapPoint * newZoom
-    const newPan={x:mx-mapX*newZoom,y:my-mapY*newZoom};
-    setZoom(newZoom);setPan(newPan);
+    // Cursor position as fraction of container
+    const fx=(e.clientX-rect.left)/rect.width;
+    const fy=(e.clientY-rect.top)/rect.height;
+    // Point in SVG space under cursor
+    const svgX=cv.x+cv.w*fx;
+    const svgY=cv.y+cv.h*fy;
+    // New viewBox size (clamp: min 1% of original, max 500%)
+    const ow=origVb.current.w;const oh=origVb.current.h;
+    const nw=Math.max(ow*0.01,Math.min(ow*5,cv.w*factor));
+    const nh=Math.max(oh*0.01,Math.min(oh*5,cv.h*factor));
+    // Keep point under cursor at same screen position
+    const nx=svgX-nw*fx;
+    const ny=svgY-nh*fy;
+    setVb({x:nx,y:ny,w:nw,h:nh});
   },[]);
 
   const handleClick=useCallback(e=>{let el=e.target;while(el&&el.tagName!=='svg'){const id=el.id||"";
@@ -652,29 +690,63 @@ function MapViewer({svgStr,pack,onSelectEntity}){
     if(id.match(/^burg\d+/)){const n=parseInt((id.match(/\d+/)||[0])[0]);const b=sa(pack?.burgs)[n];if(b){setSb({type:"burg",d:b,name:b.name});setSideTab("info");}return;}
     el=el.parentElement;}},[pack]);
 
+  // Pan via viewBox
+  const startDrag=useCallback(e=>{if(e.button===0){setDrag(true);setDs({x:e.clientX,y:e.clientY});}},[]);
+  const onDrag=useCallback(e=>{if(!drag)return;
+    const cv=vbRef.current;if(!cv)return;
+    const rect=containerRef.current.getBoundingClientRect();
+    const dx=(e.clientX-ds.x)*(cv.w/rect.width);
+    const dy=(e.clientY-ds.y)*(cv.h/rect.height);
+    setVb({x:cv.x-dx,y:cv.y-dy,w:cv.w,h:cv.h});
+    setDs({x:e.clientX,y:e.clientY});
+  },[drag,ds]);
+
+  // Touch support for mobile pan/pinch
+  const touchRef=useRef({dist:0,mid:{x:0,y:0}});
+  const onTouchStart=useCallback(e=>{
+    if(e.touches.length===1){setDrag(true);setDs({x:e.touches[0].clientX,y:e.touches[0].clientY});}
+    if(e.touches.length===2){const t=e.touches;const dx=t[1].clientX-t[0].clientX;const dy=t[1].clientY-t[0].clientY;
+      touchRef.current={dist:Math.hypot(dx,dy),mid:{x:(t[0].clientX+t[1].clientX)/2,y:(t[0].clientY+t[1].clientY)/2}};}
+  },[]);
+  const onTouchMove=useCallback(e=>{e.preventDefault();const cv=vbRef.current;if(!cv)return;const rect=containerRef.current.getBoundingClientRect();
+    if(e.touches.length===1&&drag){
+      const dx=(e.touches[0].clientX-ds.x)*(cv.w/rect.width);const dy=(e.touches[0].clientY-ds.y)*(cv.h/rect.height);
+      setVb({x:cv.x-dx,y:cv.y-dy,w:cv.w,h:cv.h});setDs({x:e.touches[0].clientX,y:e.touches[0].clientY});
+    }
+    if(e.touches.length===2&&origVb.current){const t=e.touches;const dx=t[1].clientX-t[0].clientX;const dy=t[1].clientY-t[0].clientY;
+      const dist=Math.hypot(dx,dy);const factor=touchRef.current.dist/dist;const ow=origVb.current.w;const oh=origVb.current.h;
+      const nw=Math.max(ow*0.01,Math.min(ow*5,cv.w*factor));const nh=Math.max(oh*0.01,Math.min(oh*5,cv.h*factor));
+      const mx=(t[0].clientX+t[1].clientX)/2;const my=(t[0].clientY+t[1].clientY)/2;
+      const fx=(mx-rect.left)/rect.width;const fy=(my-rect.top)/rect.height;
+      const svgX=cv.x+cv.w*fx;const svgY=cv.y+cv.h*fy;
+      setVb({x:svgX-nw*fx,y:svgY-nh*fy,w:nw,h:nh});
+      touchRef.current={dist,mid:{x:mx,y:my}};
+    }
+  },[drag,ds]);
+  const endDrag=useCallback(()=>setDrag(false),[]);
+
   const PRESETS=[["Political","political"],["Physical","physical"],["Religious","religious"],["Cultural","cultural"],["Provinces","provinces"],["Biomes","biomes"],["Heightmap","heightmap"],["Military","military"],["Emblems","emblems"],["Show All",null]];
   const layerIds=Object.keys(layers).sort();
 
+  // Zoom button helpers
+  const zoomBy=f=>{const cv=vbRef.current;if(!cv||!origVb.current)return;const ow=origVb.current.w;const oh=origVb.current.h;
+    const nw=Math.max(ow*0.01,Math.min(ow*5,cv.w*f));const nh=Math.max(oh*0.01,Math.min(oh*5,cv.h*f));
+    const cx=cv.x+cv.w/2;const cy=cv.y+cv.h/2;setVb({x:cx-nw/2,y:cy-nh/2,w:nw,h:nh});};
+
   return(<div style={{display:"flex",height:"100%"}}>
-    {/* Map canvas - overflow hidden, no scroll */}
-    <div ref={containerRef} style={{flex:1,position:"relative",overflow:"hidden",background:"#e8ecf0",cursor:drag?"grabbing":"grab",userSelect:"none"}}
+    {/* Map canvas */}
+    <div ref={containerRef} style={{flex:1,position:"relative",overflow:"hidden",background:"#e8ecf0",cursor:drag?"grabbing":"grab",userSelect:"none",touchAction:"none"}}
       onWheel={handleWheel}
-      onMouseDown={e=>{if(e.button===0){setDrag(true);setDs({x:e.clientX-pan.x,y:e.clientY-pan.y});}}}
-      onMouseMove={e=>{if(drag)setPan({x:e.clientX-ds.x,y:e.clientY-ds.y});}}
-      onMouseUp={()=>setDrag(false)} onMouseLeave={()=>setDrag(false)}>
-      {/* Map div - absolutely positioned, transformed */}
+      onMouseDown={startDrag} onMouseMove={onDrag} onMouseUp={endDrag} onMouseLeave={endDrag}
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={endDrag}>
       <div ref={mapRef} className="map-container" onClick={handleClick}
-        style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",transform:"translate("+pan.x+"px,"+pan.y+"px) scale("+zoom+")",transformOrigin:"0 0",willChange:"transform"}}
+        style={{position:"absolute",top:0,left:0,width:"100%",height:"100%"}}
         dangerouslySetInnerHTML={{__html:svgStr}}/>
       {/* Zoom controls */}
       <div style={{position:"absolute",bottom:16,right:16,display:"flex",gap:6,zIndex:5}}>
-        <Btn sm v="s" onClick={()=>{const f=1.3;const rect=containerRef.current?.getBoundingClientRect();const cx=rect?rect.width/2:400;const cy=rect?rect.height/2:300;
-          const nz=Math.min(20,zoom*f);const mx=(cx-pan.x)/zoom;const my=(cy-pan.y)/zoom;
-          setZoom(nz);setPan({x:cx-mx*nz,y:cy-my*nz});}}>+</Btn>
-        <Btn sm v="s" onClick={()=>{const f=1.3;const rect=containerRef.current?.getBoundingClientRect();const cx=rect?rect.width/2:400;const cy=rect?rect.height/2:300;
-          const nz=Math.max(0.02,zoom/f);const mx=(cx-pan.x)/zoom;const my=(cy-pan.y)/zoom;
-          setZoom(nz);setPan({x:cx-mx*nz,y:cy-my*nz});}}>−</Btn>
-        <Btn sm v="s" onClick={()=>{setZoom(1);setPan({x:0,y:0});}}>Reset</Btn>
+        <Btn sm v="s" onClick={()=>zoomBy(1/1.4)}>+</Btn>
+        <Btn sm v="s" onClick={()=>zoomBy(1.4)}>−</Btn>
+        <Btn sm v="s" onClick={()=>{if(origVb.current)setVb({...origVb.current});}}>Reset</Btn>
       </div>
     </div>
     {/* Sidebar with tabs */}
