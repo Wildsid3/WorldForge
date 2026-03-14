@@ -294,6 +294,11 @@ window.db={
   async saveUniverseChat(uid,aid,c){c.updated=new Date().toISOString();return IDB.set("chat:universe:"+uid+":"+aid+":"+c.id,c);},
   async loadUniverseChat(uid,aid,cid){return IDB.get("chat:universe:"+uid+":"+aid+":"+cid);},
   async countUniverseTopics(uid,aid){return(await IDB.list("topic:universe:"+uid+":"+aid+":")).length;},
+  async listUniverseTopics(uid,aid){const ks=await IDB.list("topic:universe:"+uid+":"+aid+":");const ts=[];for(const k of ks){const t=await IDB.get(k);if(t)ts.push(t);}ts.sort((a,b)=>(a.name||"").localeCompare(b.name||""));return ts;},
+  async saveUniverseTopic(t){t.updated=new Date().toISOString();t.tags=normTags(t.tags);if(!t.timeline)t.timeline=[];if(t.born_year===undefined)t.born_year=null;if(t.died_year===undefined)t.died_year=null;await IDB.set("topic:universe:"+t.universe_id+":"+t.aspect_id+":"+t.id,t);return t;},
+  async deleteUniverseTopic(uid,aid,tid){return IDB.del("topic:universe:"+uid+":"+aid+":"+tid);},
+  async listAllUniverseTags(uid){const tags={};for(const a of UNIVERSE_ASPECTS){const ks=await IDB.list("topic:universe:"+uid+":"+a.id+":");for(const k of ks){const t=await IDB.get(k);if(t&&t.tags)for(const tg of t.tags)tags[tg]=(tags[tg]||0)+1;}}return Object.entries(tags).sort((a,b)=>b[1]-a[1]).map(([t,c])=>({tag:t,count:c}));},
+  async gatherAllUniverseText(uid){let all="";for(const a of UNIVERSE_ASPECTS){const t=await this.gatherUniverseAspectText(uid,a.id);if(t)all+="\n["+a.name+"]\n"+t;}const uc=await this.gatherUniverseAspectText(uid,"__universechat__");if(uc)all+="\n[Universe Chat]\n"+uc;return all;},
   async gatherUniverseAspectText(uid,aid){const chats=await this.listUniverseChats(uid,aid);const ts=[];for(const ch of chats){const f=await this.loadUniverseChat(uid,aid,ch.id);if(f)for(const m of f.messages||[])ts.push(m.content||"");}return ts.join("\n\n");},
   async listWorlds(){const ks=await IDB.list("world:");const ws=[];for(const k of ks){const w=await IDB.get(k);if(w)ws.push(w);}ws.sort((a,b)=>(a.created||"").localeCompare(b.created||""));return ws;},
   async listWorldsForUniverse(uid){const all=await this.listWorlds();return all.filter(w=>w.universe_id===uid);},
@@ -868,7 +873,7 @@ function MapViewer({svgStr,pack,onSelectEntity}){
 function App(){
   const[scr,setScr]=useState("main");const[worlds,setWorlds]=useState([]);const[wDescs,setWDescs]=useState({});
   const[universes,setUniverses]=useState([]);const[cU,setCU]=useState(null);const[uAspCounts,setUAspCounts]=useState({});
-  const[uc,setUc]=useState(false);const[uAspChat,setUAspChat]=useState(null);
+  const[uc,setUc]=useState(false);const[uAspChat,setUAspChat]=useState(null);const[cUA,setCUA]=useState(null);
   const[cW,setCW]=useState(null);const[cA,setCA]=useState(null);const[cC,setCC]=useState(null);
   const[cList,setCList]=useState([]);const[topicList,setTopicList]=useState([]);const[curTopic,setCurTopic]=useState(null);
   const[compiledLore,setCompiledLore]=useState("");const[loadingLore,setLoadingLore]=useState(false);
@@ -894,9 +899,10 @@ function App(){
   const loadAspCounts=async wid=>{const c={},ch={};for(const a of ASPECTS){c[a.id]=await db.countTopics(wid,a.id);ch[a.id]=(await db.listChats(wid,a.id)).length;}ch["__worldchat__"]=(await db.listChats(wid,"__worldchat__")).length;setAspCounts(c);setAspChats(ch);setHasMapData(await db.hasMap(wid));};
   const loadUAspCounts=async uid=>{const c={};for(const a of UNIVERSE_ASPECTS)c[a.id]=await db.countUniverseTopics(uid,a.id);setUAspCounts(c);};
 
-  const goMain=()=>{setScr("main");setCU(null);setCW(null);setCA(null);setCC(null);setCurTopic(null);setGen(false);setWc(false);setUc(false);setUAspChat(null);setMapSvg(null);setMapPack(null);setViewYear(null);};
+  const goMain=()=>{setScr("main");setCU(null);setCW(null);setCA(null);setCUA(null);setCC(null);setCurTopic(null);setGen(false);setWc(false);setUc(false);setUAspChat(null);setMapSvg(null);setMapPack(null);setViewYear(null);};
   const goUniverses=async()=>{await ldU();await ldW();setScr("universes");};
-  const goUniverse=async u=>{setCU(u);setCW(null);setCA(null);await loadUAspCounts(u.id);await ldW();setScr("universe");};
+  const goUniverse=async u=>{setCU(u);setCW(null);setCA(null);setCUA(null);await loadUAspCounts(u.id);await ldW();setScr("universe");};
+  const goUniverseAspect=async a=>{setCUA(a);setTopicList(await db.listUniverseTopics(cU.id,a.id));setCList(await db.listUniverseChats(cU.id,a.id));setTagFilter("");setAllTags(await db.listAllUniverseTags(cU.id));setScr("uaspect");};
   const goWorlds=async()=>{await ldW();setScr("worlds");};
   const goWorld=async w=>{setCW(w);setCA(null);setCC(null);setCurTopic(null);setWc(false);setViewYear(w.viewing_year||w.current_year||null);await loadAspCounts(w.id);setScr("world");};
   const goAspect=async a=>{setCA(a);setTopicList(await db.listTopics(cW.id,a.id));setCList(await db.listChats(cW.id,a.id));setTagFilter("");setAllTags(await db.listAllTags(cW.id));setScr("aspect");};
@@ -932,13 +938,32 @@ function App(){
       else{await db.saveTopic({id:mkId(),name:p.name,brief:p.brief||"",template:TMPL_FOR[cA.id]||"culture",tags:normTags(p.tags||[]),hist_type:p.hist_type||"general",born_year:p.year||null,died_year:null,timeline:p.year?[{year:p.year,event:p.brief||p.name}]:[],fields:{},aspect_id:cA.id,world_id:cW.id,created:new Date().toISOString(),updated:new Date().toISOString()});added++;}}
     setTopicList(await db.listTopics(cW.id,cA.id));await loadAspCounts(cW.id);flash("+"+added);setMod(null);setScanResults(null);};
   const scanAll=async()=>{if(!cW)return;setBusy(true);let total=0;for(const a of ASPECTS){setScanNotif("Scanning "+a.name+"...");const r=await scanAspect(cW.id,a,false);total+=r.added||0;}await loadAspCounts(cW.id);setScanNotif("");setBusy(false);flash("Done: +"+total);};
+  // === Universe Scan ===
+  const scanUniverseAspect=async(uid,aspect,review)=>{const text=(await db.gatherUniverseAspectText(uid,aspect.id)+"\n"+await db.gatherUniverseAspectText(uid,"__universechat__")).trim();if(!text)return{added:0};
+    const prompt=CAT_RULES+'\n\nExtract for "'+aspect.id+'" category. '+aspect.topicPrompt+'.\nFor EACH entity: {"name","brief","tags":[2-5],"year":number_or_null}\nReturn ONLY a JSON array. If nothing found: []';
+    const resp=await aiCall(prompt,[{role:"user",content:text.slice(0,12000)}],2048);let parsed=[];
+    try{const c=resp.trim().replace(/^```\w*\n?/,"").replace(/\n?```$/,"");const a=c.match(/\[[\s\S]*\]/);parsed=a?JSON.parse(a[0]):[];}catch(e){return{added:0,error:"parse"};}
+    if(review)return{parsed};
+    const existing=await db.listUniverseTopics(uid,aspect.id);const byN={};existing.forEach(t=>byN[t.name.toLowerCase()]=t);let added=0;
+    for(const p of parsed){const key=p.name?.toLowerCase();if(!key)continue;
+      if(byN[key]){const o=byN[key];await db.saveUniverseTopic({...o,brief:p.brief||o.brief,tags:normTags([...(o.tags||[]),...(p.tags||[])])});}
+      else{await db.saveUniverseTopic({id:mkId(),name:p.name,brief:p.brief||"",template:"culture",tags:normTags(p.tags||[]),born_year:p.year||null,died_year:null,timeline:p.year?[{year:p.year,event:p.brief||p.name}]:[],fields:{},aspect_id:aspect.id,universe_id:uid,created:new Date().toISOString(),updated:new Date().toISOString()});added++;}}
+    return{added};};
+  const scanUCurrent=async()=>{if(!cU||!cUA)return;setBusy(true);const r=await scanUniverseAspect(cU.id,cUA,true);setBusy(false);if(r.parsed){r.parsed.forEach(p=>p._accept=true);setScanResults(r.parsed);setMod({t:"ureview"});}else flash("Nothing found");};
+  const saveUScanResults=async()=>{if(!scanResults||!cU||!cUA)return;const existing=await db.listUniverseTopics(cU.id,cUA.id);const byN={};existing.forEach(t=>byN[t.name.toLowerCase()]=t);let added=0;
+    for(const p of scanResults){if(!p._accept)continue;const key=p.name?.toLowerCase();if(!key)continue;
+      if(byN[key]){const o=byN[key];await db.saveUniverseTopic({...o,brief:p.brief||o.brief,tags:normTags([...(o.tags||[]),...(p.tags||[])])});}
+      else{await db.saveUniverseTopic({id:mkId(),name:p.name,brief:p.brief||"",template:"culture",tags:normTags(p.tags||[]),born_year:p.year||null,died_year:null,timeline:p.year?[{year:p.year,event:p.brief||p.name}]:[],fields:{},aspect_id:cUA.id,universe_id:cU.id,created:new Date().toISOString(),updated:new Date().toISOString()});added++;}}
+    setTopicList(await db.listUniverseTopics(cU.id,cUA.id));await loadUAspCounts(cU.id);flash("+"+added);setMod(null);setScanResults(null);};
+  const scanAllUniverse=async()=>{if(!cU)return;setBusy(true);let total=0;for(const a of UNIVERSE_ASPECTS){setScanNotif("Scanning "+a.name+"...");const r=await scanUniverseAspect(cU.id,a,false);total+=r.added||0;}await loadUAspCounts(cU.id);setScanNotif("");setBusy(false);flash("Done: +"+total);};
+  const compileULore=async()=>{if(!curTopic||!cU)return;setLoadingLore(true);const all=await db.gatherAllUniverseText(cU.id);const resp=await aiCall(window.buildLorePrompt(curTopic.name,cU.name),[{role:"user",content:all.slice(0,15000)}],2048);setCompiledLore(resp);setLoadingLore(false);};
   const doSheet=async(name)=>{setBusy(true);setScr("charsheet");
     const text=await db.gatherAspectText(cW.id,"characters");const bible=await db.getBible(cW.id);
     const sys="Create a Baldur's Gate style character sheet for \""+name+"\" in \""+cW.name+"\". Use ONLY conversation data. For unknowns write \"Unknown\". Include: Name, Race, Class, Alignment, Level, Stats, Background, Traits, Abilities, Equipment, Relationships, Description, Notes.";
     const resp=await aiCall(sys,[{role:"user",content:"Bible: "+JSON.stringify(bible.facts)+"\n\nConversations:\n"+text.slice(0,6000)}],1024);
     setSheet(resp);setBusy(false);
   };
-  const exitChat=async()=>{if(uc){setCC(null);setUc(false);if(cU)goUniverse(cU);else goMain();return;}const pa=cA,pw=cW;if(!gen&&!wc&&pw&&pa&&cC?.messages?.length>1){setScanNotif("Auto-scanning...");setTimeout(async()=>{await scanAspect(pw.id,pa,false);await loadAspCounts(pw.id);setScanNotif("Done");setTimeout(()=>setScanNotif(""),2000);},100);}setCC(null);setScr(gen?"general":(wc?"worldchatlist":"aspect"));};
+  const exitChat=async()=>{if(uc){setCC(null);setUc(false);if(cUA&&cU){goUniverseAspect(cUA);}else if(cU){goUniverse(cU);}else{goMain();}return;}const pa=cA,pw=cW;if(!gen&&!wc&&pw&&pa&&cC?.messages?.length>1){setScanNotif("Auto-scanning...");setTimeout(async()=>{await scanAspect(pw.id,pa,false);await loadAspCounts(pw.id);setScanNotif("Done");setTimeout(()=>setScanNotif(""),2000);},100);}setCC(null);setScr(gen?"general":(wc?"worldchatlist":"aspect"));};
   const compileLore=async()=>{if(!curTopic||!cW)return;setLoadingLore(true);const all=await db.gatherAllText(cW.id);const resp=await aiCall(window.buildLorePrompt(curTopic.name,cW.name),[{role:"user",content:all.slice(0,15000)}],2048);setCompiledLore(resp);setLoadingLore(false);};
 
   // Timeline year change
@@ -1018,6 +1043,14 @@ function App(){
       </div>))}</div>}
       <div style={{display:"flex",gap:8,marginTop:16}}><Btn full onClick={saveScanResults}>Save Selected</Btn><Btn v="s" onClick={()=>{setMod(null);setScanResults(null);}}>Cancel</Btn></div>
     </Modal>
+    <Modal open={mod?.t==="ureview"} title="Review Universe Scan" onClose={()=>{setMod(null);setScanResults(null);}} wide>
+      <div style={{fontSize:12,color:T.txD,marginBottom:12}}>Uncheck anything wrong before saving.</div>
+      {scanResults&&<div style={{maxHeight:400,overflowY:"auto"}}>{scanResults.map((r,i)=>(<div key={i} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"1px solid "+T.bd+"44"}}>
+        <input type="checkbox" checked={r._accept!==false} onChange={()=>{const u=[...scanResults];u[i]={...u[i],_accept:!u[i]._accept};setScanResults(u);}} style={{marginTop:4}}/>
+        <div><div style={{fontSize:14,fontWeight:600,color:r._accept===false?T.txD:T.gold}}>{r.name}{r.year?" (Year "+r.year+")":""}</div><div style={{fontSize:12,color:T.txM}}>{r.brief}</div>{r.tags&&<div style={{display:"flex",gap:4,marginTop:4}}>{r.tags.map(t=><Tag key={t} label={t}/>)}</div>}</div>
+      </div>))}</div>}
+      <div style={{display:"flex",gap:8,marginTop:16}}><Btn full onClick={saveUScanResults}>Save Selected</Btn><Btn v="s" onClick={()=>{setMod(null);setScanResults(null);}}>Cancel</Btn></div>
+    </Modal>
     <Modal open={mod?.t==="addTag"} title="Add Tag" onClose={()=>setMod(null)}><input autoFocus value={tagInput} onChange={e=>setTagInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&tagInput.trim()){(async()=>{const t={...curTopic,tags:normTags([...(curTopic.tags||[]),tagInput.trim()])};await db.saveTopic(t);setCurTopic(t);setTagInput("");setMod(null);})();}}} placeholder="tag..." style={iS}/>{allTags.length>0&&<div style={{marginTop:10,display:"flex",gap:4,flexWrap:"wrap"}}>{allTags.slice(0,20).map(t=><Tag key={t.tag} label={t.tag} onClick={async()=>{const tp={...curTopic,tags:normTags([...(curTopic.tags||[]),t.tag])};await db.saveTopic(tp);setCurTopic(tp);setMod(null);}}/>)}</div>}<div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={async()=>{if(!tagInput.trim())return;const t={...curTopic,tags:normTags([...(curTopic.tags||[]),tagInput.trim()])};await db.saveTopic(t);setCurTopic(t);setTagInput("");setMod(null);}} disabled={!tagInput.trim()}>Add</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
     <Modal open={mod?.t==="addTL"} title="Add Timeline Event" onClose={()=>setMod(null)}><input value={modIn} onChange={e=>setModIn(e.target.value)} placeholder="Year" type="number" style={{...iS,maxWidth:120,marginBottom:10}}/><input value={modIn2} onChange={e=>setModIn2(e.target.value)} placeholder="Event description..." style={iS}/><div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={async()=>{if(!modIn||!modIn2.trim()||!curTopic)return;const t=await db.addTimelineEvent(cW.id,cA.id,curTopic.id,parseInt(modIn),modIn2.trim());if(t)setCurTopic(t);flash("Added");setMod(null);}} disabled={!modIn||!modIn2.trim()}>Add</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
     <input ref={svgFileRef} type="file" accept=".svg" style={{display:"none"}} onChange={handleSvgFile}/>
@@ -1047,14 +1080,14 @@ function App(){
     return S(<><div style={{padding:"14px 32px 10px",display:"flex",alignItems:"center",gap:12,borderBottom:"1px solid "+T.bd}}>
       <button onClick={goUniverses} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer"}}>{"‹"}</button>
       <div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:26,fontWeight:700,color:T.gold}}>{cU.name}</div><div style={{fontSize:11,color:T.txD}}>Universe</div></div>
-      <Btn sm v="g" onClick={openBible}>📖</Btn><Btn sm v="g" onClick={openFact}>📝</Btn></div>
+      <Btn sm v="g" onClick={openBible}>📖</Btn><Btn sm v="g" onClick={openFact}>📝</Btn><Btn sm v="a" onClick={scanAllUniverse} disabled={busy}>{busy?"...":"🔍 All"}</Btn></div>
       <div style={{flex:1,overflowY:"auto",padding:"20px 32px"}}>
-        <button onClick={async()=>{const chats=await db.listUniverseChats(cU.id,"__universechat__");if(chats.length>0){const f=await db.loadUniverseChat(cU.id,"__universechat__",chats[0].id);if(f){setCC(f);setUc(true);setUAspChat("__universechat__");setGen(false);setWc(false);setScr("chat");return;}}const c=await db.createUniverseChat(cU.id,"__universechat__","Universe Chat");setCC(c);setUc(true);setUAspChat("__universechat__");setGen(false);setWc(false);setScr("chat");}} style={{width:"100%",padding:20,background:"linear-gradient(135deg,"+T.sf+","+T.sf2+")",border:"2px solid "+T.bd,borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:20,transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:T.gold}}>💬 Universe Chat</div><div style={{fontSize:12,color:T.txM}}>Freeform discussion about the universe</div></button>
+        <button onClick={async()=>{const chats=await db.listUniverseChats(cU.id,"__universechat__");if(chats.length>0){const f=await db.loadUniverseChat(cU.id,"__universechat__",chats[0].id);if(f){setCC(f);setUc(true);setUAspChat("__universechat__");setCUA(null);setGen(false);setWc(false);setScr("chat");return;}}const c=await db.createUniverseChat(cU.id,"__universechat__","Universe Chat");setCC(c);setUc(true);setUAspChat("__universechat__");setCUA(null);setGen(false);setWc(false);setScr("chat");}} style={{width:"100%",padding:20,background:"linear-gradient(135deg,"+T.sf+","+T.sf2+")",border:"2px solid "+T.bd,borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:20,transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:T.gold}}>💬 Universe Chat</div><div style={{fontSize:12,color:T.txM}}>Freeform discussion about the universe</div></button>
         <div style={{borderBottom:"1px solid "+T.bd,marginBottom:16,paddingBottom:6,fontSize:11,color:T.txD,textTransform:"uppercase",letterSpacing:1}}>Universe Aspects</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:24}}>{UNIVERSE_ASPECTS.map(a=>{const tc=uAspCounts[a.id]||0;
-          return(<button key={a.id} onClick={async()=>{const chats=await db.listUniverseChats(cU.id,a.id);if(chats.length>0){const f=await db.loadUniverseChat(cU.id,a.id,chats[0].id);if(f){setCC(f);setUc(true);setUAspChat(a.id);setGen(false);setWc(false);setScr("chat");return;}}const c=await db.createUniverseChat(cU.id,a.id,a.name);setCC(c);setUc(true);setUAspChat(a.id);setGen(false);setWc(false);setScr("chat");}} style={{padding:"16px 10px",background:T.sf,border:"1px solid "+T.bd,borderRadius:10,cursor:"pointer",textAlign:"center",transition:"border-color .2s,transform .15s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.gold;e.currentTarget.style.transform="translateY(-2px)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bd;e.currentTarget.style.transform="translateY(0)";}}>
+          return(<button key={a.id} onClick={()=>goUniverseAspect(a)} style={{padding:"16px 10px",background:T.sf,border:"1px solid "+T.bd,borderRadius:10,cursor:"pointer",textAlign:"center",transition:"border-color .2s,transform .15s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.gold;e.currentTarget.style.transform="translateY(-2px)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bd;e.currentTarget.style.transform="translateY(0)";}}>
             <div style={{fontSize:24,marginBottom:4}}>{a.icon}</div><div style={{fontSize:11,fontWeight:500,color:T.tx}}>{a.name}</div>
-            {tc>0&&<div style={{fontSize:9,color:T.txD,marginTop:3}}>{tc+" entries"}</div>}
+            <div style={{fontSize:9,color:T.txD,marginTop:3}}>{tc+" entries"}</div>
           </button>);})}</div>
         <div style={{borderBottom:"1px solid "+T.bd,marginBottom:16,paddingBottom:6,display:"flex",alignItems:"center"}}><span style={{fontSize:11,color:T.txD,textTransform:"uppercase",letterSpacing:1,flex:1}}>Worlds ({uWorlds.length})</span><Btn sm onClick={openNewWorld}>+ New World</Btn></div>
         {uWorlds.length===0?<div style={{textAlign:"center",padding:30,color:T.txD}}>No worlds in this universe</div>
@@ -1066,6 +1099,23 @@ function App(){
           </button>))}
       </div></>);}
 
+  if(scr==="uaspect"&&cU&&cUA)return S(<><div style={{padding:"14px 32px 10px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>goUniverse(cU)} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold}}>{cUA.icon+" "+cUA.name}</div><div style={{fontSize:11,color:T.txD}}>{cU.name+" · "+topicList.length+" entries · "+cList.length+" chats"}</div></div>
+    <div style={{display:"flex",gap:6,marginLeft:8}}><Btn sm v="a" onClick={scanUCurrent} disabled={busy}>{busy?"...":"🔍"}</Btn><Btn sm onClick={async()=>{const c=await db.createUniverseChat(cU.id,cUA.id,cUA.name);setCC(c);setUc(true);setUAspChat(cUA.id);setGen(false);setWc(false);setScr("chat");}}>💬</Btn>{cList.length>0&&<Btn sm v="s" onClick={()=>setScr("uchatlist")}>▶</Btn>}</div></div>
+    <div style={{flex:1,overflowY:"auto",padding:"16px 32px"}}>
+      {(topicList.length>0||allTags.length>0)&&<div style={{marginBottom:12,display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:10,color:T.txD,textTransform:"uppercase"}}>Filter:</span><Tag label="All" active={!tagFilter} onClick={()=>setTagFilter("")}/>{allTags.filter(t=>topicList.some(tp=>(tp.tags||[]).includes(t.tag))).slice(0,12).map(t=><Tag key={t.tag} label={t.tag} active={tagFilter===t.tag} onClick={()=>setTagFilter(tagFilter===t.tag?"":t.tag)}/>)}</div>}
+      {topicList.length===0?<div style={{textAlign:"center",padding:40}}><div style={{fontSize:48,opacity:.3}}>{cUA.icon}</div><div style={{color:T.txD,margin:"16px 0"}}>No entries. Chat then Scan.</div></div>
+        :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200,1fr))",gap:12}}>{(tagFilter?topicList.filter(t=>(t.tags||[]).includes(tagFilter)):topicList).map(t=>(<button key={t.id} onClick={()=>{setCurTopic(t);setCompiledLore("");setScr("ucard");}} style={{padding:14,background:T.sf,border:"1px solid "+T.bd,borderRadius:10,cursor:"pointer",textAlign:"left",transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
+            <div style={{fontSize:14,fontWeight:600,color:T.gold}}>{t.name}</div>
+            {t.brief&&<div style={{fontSize:11,color:T.txM,lineHeight:1.3,marginTop:2}}>{t.brief.slice(0,80)}</div>}
+            {t.tags&&t.tags.length>0&&<div style={{display:"flex",gap:3,flexWrap:"wrap",marginTop:6}}>{t.tags.slice(0,3).map(tg=><Tag key={tg} label={tg}/>)}</div>}
+          </button>))}</div>}
+    </div></>);
+
+  if(scr==="ucard"&&curTopic&&cU)return S(<><div style={{padding:"14px 32px 10px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>{if(cUA)goUniverseAspect(cUA);else goUniverse(cU);}} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold}}>{curTopic.name}</div><div style={{fontSize:11,color:T.txD}}>{cUA?.name+" · "+cU.name}</div></div>
+    <div style={{display:"flex",gap:6,marginLeft:8}}><Btn sm v="d" onClick={async()=>{await db.deleteUniverseTopic(cU.id,cUA.id,curTopic.id);setTopicList(await db.listUniverseTopics(cU.id,cUA.id));flash("Deleted");setScr("uaspect");}}>Del</Btn></div></div>
+    <div style={{flex:1,overflowY:"auto",padding:"16px 32px"}}><div style={{maxWidth:820,margin:"0 auto"}}><CardView topic={curTopic} viewYear={null} compiledLore={compiledLore} onRefreshLore={compileULore} loadingLore={loadingLore}/></div></div></>);
+
+  if(scr==="uchatlist"&&cU&&cUA)return S(<><div style={{padding:"14px 32px 10px",display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>goUniverseAspect(cUA)} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold,flex:1}}>Chats</div></div><div style={{flex:1,overflowY:"auto",padding:"16px 32px",maxWidth:700}}>{cList.map(c=><button key={c.id} onClick={()=>goChat(c,false,false,true,cUA.id)} style={{display:"block",width:"100%",padding:"12px 14px",marginBottom:6,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",textAlign:"left",color:T.tx}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontSize:14,fontWeight:500}}>{c.title}</div><div style={{fontSize:11,color:T.txD,marginTop:3}}>{new Date(c.updated).toLocaleDateString()+" · "+(c.messages?.length||0)+" msgs"}</div></button>)}</div></>);
   if(scr==="world"&&cW)return S(<><div style={{padding:"14px 32px 10px",display:"flex",alignItems:"center",gap:12,borderBottom:"1px solid "+T.bd}}>
     <button onClick={()=>{if(cU)goUniverse(cU);else goMain();}} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer"}}>{"‹"}</button>
     <div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:26,fontWeight:700,color:T.gold}}>{cW.name}</div>{cW.useUniverseContext&&<div style={{fontSize:10,color:T.accent}}>🔗 Universe context active</div>}</div>
