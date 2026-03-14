@@ -1,12 +1,12 @@
 {
-  "name": "WorldForge Desktop",
-  "short_name": "WorldForge",
+  "name": "CelestialForge Desktop",
+  "short_name": "CelestialForge",
   "description": "Worldbuilding AI Notebook — Desktop Edition",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f0f0f",
   "theme_color": "#c8a24e",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
 }
