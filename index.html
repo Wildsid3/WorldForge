@@ -552,7 +552,58 @@ const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",heade
 window.buildExtractPrompt=function(aspect){return CAT_RULES+'\n\nExtract for "'+aspect.id+'" category. '+aspect.topicPrompt+'.\nFor EACH entity: {"name","brief","tags":[2-5]'+(aspect.id==="history"?',"hist_type":"battle|death|revolution|birth|nation-formation|tech-advancement|treaty|disaster|general","year":number_or_null':',\"year\":number_or_null')+'}\nReturn ONLY a JSON array. If nothing found: []';};
 window.buildLorePrompt=function(name,wn){return'Compile ALL information about "'+name+'" in "'+wn+'" from the text below into comprehensive prose paragraphs. Include every detail mentioned. Only use provided text.';};
 
-if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+// Detect if running inside Creative Studio (iframe)
+window._insideCreativeStudio=window.parent!==window;
+if('serviceWorker' in navigator&&!window._insideCreativeStudio){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+
+// === PostMessage Bridge (Creative Studio ↔ CelestialForge) ===
+// Messages FROM CelestialForge TO Creative Studio (parent)
+window.cfBridge={
+  // Notify parent of world/universe selection changes
+  worldSelected(world){if(!window._insideCreativeStudio)return;window.parent.postMessage({source:'celestialforge',type:'world-selected',data:{id:world.id,name:world.name,universe_id:world.universe_id}},'*');},
+  universeSelected(universe){if(!window._insideCreativeStudio)return;window.parent.postMessage({source:'celestialforge',type:'universe-selected',data:{id:universe.id,name:universe.name}},'*');},
+  // Send bible data for theme hook (texture pipeline prompt construction)
+  sendBibleForTheme(worldId,facts){if(!window._insideCreativeStudio)return;window.parent.postMessage({source:'celestialforge',type:'bible-data',data:{world_id:worldId,facts:facts}},'*');},
+  // Send specific theme-relevant keys for prompt construction
+  sendThemeKeys(worldId,keys){if(!window._insideCreativeStudio)return;window.parent.postMessage({source:'celestialforge',type:'theme-keys',data:{world_id:worldId,keys:keys}},'*');},
+  // Notify that CelestialForge is ready
+  ready(){if(!window._insideCreativeStudio)return;window.parent.postMessage({source:'celestialforge',type:'ready'},'*');},
+};
+
+// Messages FROM Creative Studio TO CelestialForge
+window.addEventListener('message',async e=>{
+  if(!e.data||e.data.source!=='creative-studio')return;
+  const msg=e.data;
+  if(msg.type==='request-bible'&&msg.data?.world_id){
+    const b=await db.getBible(msg.data.world_id);
+    window.cfBridge.sendBibleForTheme(msg.data.world_id,b.facts||{});
+  }
+  if(msg.type==='request-theme-keys'&&msg.data?.world_id){
+    const b=await db.getBible(msg.data.world_id);const f=b.facts||{};
+    // Extract standardised theme keys
+    const keys={biome:null,colour_mood:null,art_style:null,architecture_style:null,cultural_aesthetic:null,terrain:null,climate:null,flora:null};
+    for(const[cat,entries] of Object.entries(f)){for(const[k,v] of Object.entries(entries)){
+      const kl=k.toLowerCase().replace(/[\s_-]+/g,'_');
+      if(kl==='biome'||kl==='primary_biome')keys.biome=v;
+      if(kl==='colour_mood'||kl==='color_mood'||kl==='colour_palette')keys.colour_mood=v;
+      if(kl==='art_style'||kl==='visual_style')keys.art_style=v;
+      if(kl==='architecture_style'||kl==='building_style')keys.architecture_style=v;
+      if(kl==='cultural_aesthetic'||kl==='aesthetic')keys.cultural_aesthetic=v;
+      if(kl==='terrain'||kl==='landscape')keys.terrain=v;
+      if(kl==='climate')keys.climate=v;
+      if(kl==='flora'||kl==='vegetation')keys.flora=v;
+    }}
+    window.cfBridge.sendThemeKeys(msg.data.world_id,keys);
+  }
+  if(msg.type==='set-theme'&&msg.data?.theme){
+    // Creative Studio can push theme (dark/light) to match its own
+    document.body.style.background=msg.data.theme==='light'?'#f5f3ee':'#0a0a0c';
+    document.body.style.color=msg.data.theme==='light'?'#2a2a32':'#e8e4dc';
+  }
+  if(msg.type==='set-api-key'&&msg.data?.key){
+    await db.setApiKey(msg.data.key);
+  }
+});
 </script>
 
 <script type="text/babel" data-type="module">
@@ -1025,7 +1076,7 @@ function App(){
   const flash=m=>{setToast(m);setTimeout(()=>setToast(""),3000);};
   const ldU=useCallback(async()=>{const us=await db.listUniverses();setUniverses(us);},[]);
   const ldW=useCallback(async()=>{const ws=await db.listWorlds();setWorlds(ws);const d={};for(const w of ws)d[w.id]=w.description||await db.getWorldSummary(w.id);setWDescs(d);},[]);
-  useEffect(()=>{(async()=>{await db.migrate();await ldU();await ldW();const k=await db.getApiKey();if(k)setHasKey(true);setProviderSel(await db.getProvider());setCustomEndpoint(await db.getCustomEndpoint()||"");})();},[]);
+  useEffect(()=>{(async()=>{await db.migrate();await ldU();await ldW();const k=await db.getApiKey();if(k)setHasKey(true);setProviderSel(await db.getProvider());setCustomEndpoint(await db.getCustomEndpoint()||"");window.cfBridge?.ready();})();},[]);
   useEffect(()=>{if(scr==="chat")endRef.current?.scrollIntoView({behavior:"smooth"});},[cC?.messages?.length,scr]);
 
   const loadAspCounts=async wid=>{const c={},ch={};for(const a of ASPECTS){c[a.id]=await db.countTopics(wid,a.id);ch[a.id]=(await db.listChats(wid,a.id)).length;}ch["__worldchat__"]=(await db.listChats(wid,"__worldchat__")).length;setAspCounts(c);setAspChats(ch);setHasMapData(await db.hasMap(wid));};
@@ -1033,10 +1084,12 @@ function App(){
 
   const goMain=()=>{setScr("main");setCU(null);setCW(null);setCA(null);setCUA(null);setCC(null);setCurTopic(null);setGen(false);setWc(false);setUc(false);setUAspChat(null);setMapSvg(null);setMapPack(null);setViewYear(null);};
   const goUniverses=async()=>{await ldU();await ldW();setScr("universes");};
-  const goUniverse=async u=>{setCU(u);setCW(null);setCA(null);setCUA(null);await loadUAspCounts(u.id);await ldW();setScr("universe");};
+  const goUniverse=async u=>{setCU(u);setCW(null);setCA(null);setCUA(null);await loadUAspCounts(u.id);await ldW();setScr("universe");window.cfBridge?.universeSelected(u);};
   const goUniverseAspect=async a=>{setCUA(a);setTopicList(await db.listUniverseTopics(cU.id,a.id));setCList(await db.listUniverseChats(cU.id,a.id));setTagFilter("");setAllTags(await db.listAllUniverseTags(cU.id));setScr("uaspect");};
   const goWorlds=async()=>{await ldW();setScr("worlds");};
-  const goWorld=async w=>{setCW(w);setCA(null);setCC(null);setCurTopic(null);setWc(false);setViewYear(w.viewing_year||w.current_year||null);await loadAspCounts(w.id);setScr("world");};
+  const goWorld=async w=>{setCW(w);setCA(null);setCC(null);setCurTopic(null);setWc(false);setViewYear(w.viewing_year||w.current_year||null);await loadAspCounts(w.id);setScr("world");window.cfBridge?.worldSelected(w);
+    // Auto-send bible theme keys to Creative Studio
+    if(window._insideCreativeStudio){const b=await db.getBible(w.id);window.cfBridge.sendBibleForTheme(w.id,b.facts||{});}};
   const goAspect=async a=>{setCA(a);setTopicList(await db.listTopics(cW.id,a.id));setCList(await db.listChats(cW.id,a.id));setTagFilter("");setAllTags(await db.listAllTags(cW.id));setScr("aspect");};
   const goChat=async(ch,g=false,w=false,uChat=false,uAsp=null)=>{
     if(uChat&&cU){const full=await db.loadUniverseChat(cU.id,uAsp||"__universechat__",ch.id);if(full){setCC(full);setUc(true);setUAspChat(uAsp);setGen(false);setWc(false);setScr("chat");}return;}
@@ -1164,7 +1217,24 @@ function App(){
     {scanNotif&&<div style={{position:"fixed",top:12,left:"50%",transform:"translateX(-50%)",background:T.accent,color:T.tx,padding:"8px 20px",borderRadius:8,fontSize:12,zIndex:100}}>{scanNotif}</div>}
     <Modal open={mod?.t==="nu"} title="Create Universe" onClose={()=>setMod(null)}><input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} placeholder="Universe name..." style={{...iS,marginBottom:10}}/><textarea value={modIn2} onChange={e=>setModIn2(e.target.value)} placeholder="Description..." rows={2} style={{...iS,resize:"vertical",marginBottom:10}}/><div style={{display:"flex",gap:8,marginTop:14}}><Btn full onClick={doNewUniverse} disabled={!modIn.trim()}>Create</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
     <Modal open={mod?.t==="nw"} title="Create World" onClose={()=>setMod(null)}><input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} placeholder="World name..." style={{...iS,marginBottom:10}}/><textarea value={modIn2} onChange={e=>setModIn2(e.target.value)} placeholder="Description..." rows={2} style={{...iS,resize:"vertical",marginBottom:10}}/><input value={modIn3} onChange={e=>setModIn3(e.target.value)} placeholder="Current year (e.g. 222)" type="number" style={{...iS,maxWidth:200}}/>{cU&&<div style={{fontSize:11,color:T.txD,marginTop:6}}>Universe: {cU.name}</div>}<div style={{display:"flex",gap:8,marginTop:14}}><Btn full onClick={doNewWorld} disabled={!modIn.trim()}>Create</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
-    <Modal open={mod?.t==="fact"} title="Add to Bible" onClose={()=>setMod(null)}><input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doFact()} placeholder="category - key: value" style={iS}/><div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doFact} disabled={!modIn.trim()}>Add</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div></Modal>
+    <Modal open={mod?.t==="fact"} title="Add to Bible" onClose={()=>setMod(null)}>
+      <input autoFocus value={modIn} onChange={e=>setModIn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doFact()} placeholder="category - key: value" style={iS}/>
+      <div style={{fontSize:10,color:T.txD,marginTop:8,marginBottom:4}}>Format: <span style={{color:T.goldD}}>geography - biome: temperate forest</span></div>
+      <div style={{borderTop:"1px solid "+T.bd,marginTop:10,paddingTop:10}}>
+        <div style={{fontSize:10,color:T.goldD,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>🎨 Theme Hook Keys <span style={{fontWeight:400,color:T.txD,textTransform:"none",letterSpacing:0}}>(used by Creative Studio texture pipeline)</span></div>
+        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{[
+          {label:"Biome",fill:"geography - biome: "},
+          {label:"Colour Mood",fill:"aesthetics - colour_mood: "},
+          {label:"Art Style",fill:"aesthetics - art_style: "},
+          {label:"Architecture",fill:"aesthetics - architecture_style: "},
+          {label:"Cultural Aesthetic",fill:"aesthetics - cultural_aesthetic: "},
+          {label:"Terrain",fill:"geography - terrain: "},
+          {label:"Climate",fill:"geography - climate: "},
+          {label:"Flora",fill:"geography - flora: "},
+        ].map(k=><button key={k.label} onClick={()=>setModIn(k.fill)} style={{padding:"3px 8px",fontSize:10,background:T.sf2,border:"1px solid "+T.bd,borderRadius:4,color:T.accent,cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>{k.label}</button>)}</div>
+      </div>
+      <div style={{display:"flex",gap:8,marginTop:12}}><Btn full onClick={doFact} disabled={!modIn.trim()}>Add</Btn><Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn></div>
+    </Modal>
     <Modal open={mod?.t==="bible"} title={(cW?.name||cU?.name||"")+" Bible"} onClose={()=>setMod(null)} wide>{bibleData&&Object.keys(bibleData).length>0?<div style={{maxHeight:500,overflowY:"auto"}}>{Object.entries(bibleData).map(([cat,ent])=>(<div key={cat} style={{marginBottom:14}}><div style={{fontSize:14,fontWeight:600,color:T.gold,textTransform:"capitalize"}}>{cat.replace(/-/g,' ')}</div>{Object.entries(ent).map(([k,v])=><div key={k} style={{fontSize:13,color:T.txM,paddingLeft:14}}>{k}: {v}</div>)}</div>))}</div>:<div style={{color:T.txD}}>Bible is empty.</div>}<div style={{display:"flex",gap:8,marginTop:14}}><Btn full v="s" onClick={()=>setMod(null)}>Close</Btn><Btn v="s" onClick={async()=>{const scope=cW?cW.id:(cU?"universe:"+cU.id:"");const snaps=await db.getBibleSnapshots(scope);setBibleSnaps(snaps);setSnapIdx(-1);setMod({t:"bibleHistory",scope});}}>📜 History</Btn></div></Modal>
     <Modal open={mod?.t==="bibleHistory"} title="Bible History" onClose={()=>setMod(null)} wide>
       {bibleSnaps.length===0?<div style={{color:T.txD,textAlign:"center",padding:20}}>No snapshots yet. History is saved each time the bible changes.</div>
