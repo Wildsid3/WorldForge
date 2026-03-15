@@ -1,5 +1,5 @@
-const CACHE = 'celestialforge-v2';
-const CDN_CACHE = 'celestialforge-cdn-v2';
+const CACHE = 'celestialforge-v3';
+const CDN_CACHE = 'celestialforge-cdn-v3';
 const ASSETS = ['/', '/index.html', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', e => {
