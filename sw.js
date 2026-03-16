@@ -1,17 +1,12 @@
-const CACHE = 'celestialforge-v4';
-const CDN_CACHE = 'celestialforge-cdn-v4';
-
-// Scope-aware asset list — works under both / and /forge/
-const BASE_ASSETS = ['', 'index.html', 'manifest.json', 'icon.svg'];
+const CACHE = 'celestialforge-v3';
+const CDN_CACHE = 'celestialforge-cdn-v3';
+const ASSETS = ['/', '/index.html', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE).then(c => {
-      // Resolve assets relative to SW scope (/ or /forge/)
-      const scope = self.registration.scope;
-      const assets = BASE_ASSETS.map(a => scope + a);
-      return c.addAll(assets);
-    }).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then(c => c.addAll(ASSETS))
+      .then(() => self.skipWaiting()) // skipWaiting inside waitUntil chain
   );
 });
 
@@ -30,14 +25,14 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
 
-  // API calls: let the browser handle directly.
-  // Covers Anthropic, DeepSeek, custom endpoints, and Creative Studio Flask routes.
+  // API calls: let the browser handle these directly (no respondWith).
+  // The bare return is intentional — calling respondWith would intercept the request.
+  // Covers Anthropic, DeepSeek, and any custom endpoints.
   if (url.hostname === 'api.anthropic.com') return;
   if (url.hostname === 'api.deepseek.com') return;
   if (url.pathname.includes('/v1/') || url.pathname.includes('/chat/')) return;
-  if (url.pathname.startsWith('/api/')) return; // Creative Studio Flask API
 
-  // CDN resources — network first, cache fallback
+  // CDN resources — network first, cache fallback, separate cache with version
   if (url.hostname !== location.hostname) {
     e.respondWith(
       fetch(e.request).then(r => {
