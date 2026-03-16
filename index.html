@@ -1009,7 +1009,7 @@ function App(){
 
   const doExport=async()=>{const data=await db.exportAll();const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="celestialforge-export.json";a.click();URL.revokeObjectURL(url);flash("Exported!");};
   const doImport=async()=>{if(!impTxt.trim())return;try{const d=JSON.parse(impTxt);const c=await db.importAll(d);flash("Imported "+c.universes+"u "+c.worlds+"w "+c.chats+"c "+c.topics+"t");setImpTxt("");await ldU();await ldW();setScr("settings");}catch(e){flash("Invalid JSON");}};
-  const saveSettings=async()=>{const k=apiKeyInput.trim();if(k){await db.setApiKey(k);setHasKey(true);}else{await db.setApiKey(null);setHasKey(false);}await db.setProvider(providerSel);await db.setCustomEndpoint(customEndpoint);flash("Saved");};
+  const saveSettings=async()=>{const k=apiKeyInput.replace(/[^\x20-\x7E]/g,'').trim();if(k){await db.setApiKey(k);setHasKey(true);}else{await db.setApiKey(null);setHasKey(false);}await db.setProvider(providerSel);await db.setCustomEndpoint(customEndpoint);flash("Saved");};
   const openBible=async()=>{if(cW){setBibleData((await db.getBible(cW.id)).facts||{});setMod({t:"bible"});}else if(cU){setBibleData((await db.getUniverseBible(cU.id)).facts||{});setMod({t:"bible"});}};
   const openFact=()=>{setModIn("");setMod({t:"fact"});};
   const doFact=async()=>{const r=modIn.trim();setMod(null);if(!r)return;const m=r.match(/(.+?)\s*-\s*(.+?):\s*(.+)/);if(m){if(cW){await db.addFact(cW.id,m[1].trim(),m[2].trim(),m[3].trim());}else if(cU){await db.addUniverseFact(cU.id,m[1].trim(),m[2].trim(),m[3].trim());}flash("Added");}else flash("cat - key: value");};
