@@ -550,7 +550,7 @@ function CardView({topic,viewYear,compiledLore,onRefreshLore,onGenerateLore,load
         </div>
       </div>
     </div>
-    {hasMfcg&&<div style={{marginTop:8}}><a href={topic.mfcg_url} target="_blank" rel="noopener" style={{fontSize:12,color:T.accent}}>🏘️ View City Map (MFCG)</a></div>}
+    {hasMfcg&&!hasCoa&&<div style={{marginTop:4}}><span style={{fontSize:11,color:T.accent}}>🏘️ Has city map</span></div>}
   </div>);
 
   const savedLore=topic.generatedLore||topic.compiledLore||"";
@@ -578,7 +578,9 @@ function CardView({topic,viewYear,compiledLore,onRefreshLore,onGenerateLore,load
         <FBox label="Population" val={f.population}/><FBox label="Government" val={f.government}/>
         <FBox label="Culture" val={f.culture}/><FBox label="Religion" val={f.religion}/>
         <FBox label="Climate / Biome" val={f.climate}/><FBox label="Elevation" val={f.resources}/>
-      </div>{tlBox}{loreBox}</div>);
+      </div>
+      {hasMfcg&&<div style={{padding:"0 24px 16px"}}><div style={{border:"1px solid "+T.bd,borderRadius:8,overflow:"hidden"}}><div style={{display:"flex",alignItems:"center",padding:"8px 12px",background:T.sf2,borderBottom:"1px solid "+T.bd}}><span style={{fontSize:12,fontWeight:600,color:T.gold,flex:1}}>🏘️ City Map</span><a href={topic.mfcg_url} target="_blank" rel="noopener" style={{fontSize:11,color:T.accent,textDecoration:"none",marginRight:8}}>Open full ↗</a></div><iframe src={topic.mfcg_url} style={{width:"100%",height:300,border:"none",background:"#e8ecf0"}} loading="lazy" sandbox="allow-scripts allow-same-origin"/></div><div style={{marginTop:8,fontSize:11,color:T.txD}}>Export JSON from MFCG menu, then import below to extract city locations.</div></div>}
+      {tlBox}{loreBox}</div>);
   }
 
   // === Notable Location ===
@@ -588,7 +590,9 @@ function CardView({topic,viewYear,compiledLore,onRefreshLore,onGenerateLore,load
       <div style={{display:"flex",minHeight:180}}>
         <div style={{flex:1,padding:"16px 24px",borderRight:"1px solid "+T.bd}}><FBox label="Physical Description" val={f.physical_desc}/></div>
         <div style={{flex:1,padding:"16px 24px"}}><FBox label="History & Events" val={f.history_events||f.history}/></div>
-      </div><FBox label="Connected Entities" val={f.connected_entities}/>{tlBox}{loreBox}</div>);
+      </div><FBox label="Connected Entities" val={f.connected_entities}/>
+      {hasMfcg&&<div style={{padding:"0 24px 16px"}}><div style={{border:"1px solid "+T.bd,borderRadius:8,overflow:"hidden"}}><div style={{display:"flex",alignItems:"center",padding:"8px 12px",background:T.sf2,borderBottom:"1px solid "+T.bd}}><span style={{fontSize:12,fontWeight:600,color:T.gold,flex:1}}>🏘️ City Map</span><a href={topic.mfcg_url} target="_blank" rel="noopener" style={{fontSize:11,color:T.accent,textDecoration:"none"}}>Open full ↗</a></div><iframe src={topic.mfcg_url} style={{width:"100%",height:300,border:"none",background:"#e8ecf0"}} loading="lazy" sandbox="allow-scripts allow-same-origin"/></div></div>}
+      {tlBox}{loreBox}</div>);
   }
 
   // === Entity (Characters/Organizations) ===
@@ -914,7 +918,7 @@ function App(){
   const[mapSvg,setMapSvg]=useState(null);const[mapPack,setMapPack]=useState(null);const[hasMapData,setHasMapData]=useState(false);
   const[scanResults,setScanResults]=useState(null);const[scanNotif,setScanNotif]=useState("");
   const[viewYear,setViewYear]=useState(null);
-  const endRef=useRef(null);const svgFileRef=useRef(null);const jsonFileRef=useRef(null);const mapFileRef=useRef(null);
+  const endRef=useRef(null);const svgFileRef=useRef(null);const jsonFileRef=useRef(null);const mapFileRef=useRef(null);const cityFileRef=useRef(null);
 
   const flash=m=>{setToast(m);setTimeout(()=>setToast(""),3000);};
   const ldU=useCallback(async()=>{const us=await db.listUniverses();setUniverses(us);},[]);
@@ -946,6 +950,31 @@ function App(){
   const handleSvgFile=async e=>{const f=e.target.files[0];if(!f||!cW)return;setBusy(true);await db.saveMapSvg(cW.id,await f.text());await loadAspCounts(cW.id);flash("Map loaded!");setMod(null);setBusy(false);svgFileRef.current.value="";};
   const handleJsonFile=async e=>{const f=e.target.files[0];if(!f||!cW)return;setBusy(true);flash("Parsing JSON...");const r=await db.importJsonExport(cW.id,await f.text());if(r.error)flash("Error: "+r.error);else{flash(r.added+" topics imported. Enriching...");const er=await db.autoEnrichFromPack(cW.id);flash(r.added+" topics + "+er.enriched+" enriched. Bible auto-populated!");await loadAspCounts(cW.id);setMod(null);}setBusy(false);jsonFileRef.current.value="";};
   const handleMapFile=async e=>{const f=e.target.files[0];if(!f||!cW)return;setBusy(true);flash("Parsing .map...");const r=await db.importAzgaarMap(cW.id,await f.text());if(r.error)flash("Error: "+r.error);else{await db.autoEnrichFromPack(cW.id);flash(r.added+" topics + Bible auto-populated!");const w=await IDB.get("world:"+cW.id);if(w){setCW(w);if(w.current_year)setViewYear(w.current_year);}await loadAspCounts(cW.id);setMod(null);}setBusy(false);mapFileRef.current.value="";};
+  const handleCityFile=async e=>{const f=e.target.files[0];if(!f||!cW||!curTopic)return;setBusy(true);flash("Parsing city data...");
+    try{const raw=await f.text();let data;try{data=JSON.parse(raw);}catch(pe){flash("Invalid JSON");setBusy(false);cityFileRef.current.value="";return;}
+      // Extract locations from MFCG JSON — flexible parser
+      const locs=[];const parentName=curTopic.name;const parentId=curTopic.id;
+      // Districts
+      if(data.districts&&Array.isArray(data.districts)){data.districts.forEach((d,i)=>{const nm=d.name||d.label||("District "+(i+1));locs.push({name:nm,brief:nm+" — district of "+parentName,subcategory:"District",fields:{type:"District",region:parentName}});});}
+      // Gates
+      if(data.walls&&data.walls.gates&&Array.isArray(data.walls.gates)){data.walls.gates.forEach((g,i)=>{const nm=g.name||g.label||("Gate "+(i+1));locs.push({name:nm,brief:nm+" — gate of "+parentName,subcategory:"Gate",fields:{type:"Gate",region:parentName}});});}
+      // Named features/buildings from various possible structures
+      const checkFeats=(arr,type)=>{if(!arr||!Array.isArray(arr))return;arr.forEach((f,i)=>{if(f.name||f.label){locs.push({name:f.name||f.label,brief:(f.name||f.label)+" — "+type.toLowerCase()+" in "+parentName,subcategory:type,fields:{type,region:parentName}});}});};
+      checkFeats(data.features,"Landmark");checkFeats(data.temples||data.temple,"Temple");checkFeats(data.markets||data.market,"Market");checkFeats(data.taverns,"Tavern");
+      // Citadel as single location
+      if(data.citadel&&typeof data.citadel==="object"){locs.push({name:(data.citadel.name||"The Citadel"),brief:"Citadel of "+parentName,subcategory:"Fortress",fields:{type:"Citadel",region:parentName}});}
+      // If nothing found from known structures, try AI extraction
+      if(locs.length===0){flash("No known structures found. Using AI to extract...");
+        const sys="Extract all named locations, districts, buildings, gates, and landmarks from this city map data for \""+parentName+"\". Return ONLY a JSON array: [{\"name\",\"brief\",\"subcategory\":\"District|Gate|Temple|Market|Tavern|Fortress|Landmark|Other\"}]. If nothing identifiable, return [].";
+        const resp=await aiCall(sys,[{role:"user",content:raw.slice(0,8000)}],2048);
+        try{const c=resp.trim().replace(/^```\w*\n?/,"").replace(/\n?```$/,"");const a=c.match(/\[[\s\S]*\]/);if(a){const parsed=JSON.parse(a[0]);parsed.forEach(p=>{if(p.name)locs.push({name:p.name,brief:p.brief||p.name+" in "+parentName,subcategory:p.subcategory||"Other",fields:{type:p.subcategory||"Location",region:parentName}});});}}catch(pe){}}
+      // Save as topics
+      let added=0;const existing=await db.listTopics(cW.id,"locations");const byN={};existing.forEach(t=>byN[t.name.toLowerCase()]=t);
+      for(const loc of locs){const key=loc.name.toLowerCase();if(byN[key])continue;
+        await db.saveTopic({id:mkId(),name:loc.name,brief:loc.brief,template:"location",tags:normTags([parentName,loc.subcategory||""]),subcategory:loc.subcategory||null,parentId:parentId,born_year:null,died_year:null,timeline:[],fields:loc.fields||{},aspect_id:"locations",world_id:cW.id,source:"mfcg",created:new Date().toISOString(),updated:new Date().toISOString()});added++;}
+      flash(added+" city locations added to Locations");await loadAspCounts(cW.id);
+    }catch(err){flash("Error: "+err.message);}
+    setBusy(false);cityFileRef.current.value="";};
 
   // Scan
   const scanAspect=async(wid,aspect,review)=>{const text=(await db.gatherAspectText(wid,aspect.id)+"\n"+await db.gatherAspectText(wid,"__worldchat__")).trim();if(!text)return{added:0};
@@ -1094,6 +1123,7 @@ function App(){
     <input ref={svgFileRef} type="file" accept=".svg" style={{display:"none"}} onChange={handleSvgFile}/>
     <input ref={jsonFileRef} type="file" accept=".json" style={{display:"none"}} onChange={handleJsonFile}/>
     <input ref={mapFileRef} type="file" accept=".map,.txt" style={{display:"none"}} onChange={handleMapFile}/>
+    <input ref={cityFileRef} type="file" accept=".json" style={{display:"none"}} onChange={handleCityFile}/>
   </div>);
 
   // ===== SCREENS =====
@@ -1143,7 +1173,7 @@ function App(){
       {(topicList.length>0||allTags.length>0)&&<div style={{marginBottom:8,display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:10,color:T.txD,textTransform:"uppercase"}}>Tags:</span><Tag label="All" active={!tagFilter} onClick={()=>setTagFilter("")}/>{allTags.filter(t=>topicList.some(tp=>(tp.tags||[]).includes(t.tag))).slice(0,mob?6:12).map(t=><Tag key={t.tag} label={t.tag} active={tagFilter===t.tag} onClick={()=>setTagFilter(tagFilter===t.tag?"":t.tag)}/>)}</div>}
       {uniqueSubs.length>0&&<div style={{marginBottom:12,display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:10,color:T.txD,textTransform:"uppercase"}}>Type:</span><Tag label="All" active={!subFilter} onClick={()=>setSubFilter("")}/>{uniqueSubs.map(s=><Tag key={s} label={s} active={subFilter===s} onClick={()=>setSubFilter(subFilter===s?"":s)}/>)}</div>}
       {(()=>{const ft=tagFilter?topicList.filter(t=>(t.tags||[]).includes(tagFilter)):topicList;const sf=subFilter?ft.filter(t=>t.subcategory===subFilter):ft;return sf.length===0?<div style={{textAlign:"center",padding:40}}><div style={{fontSize:48,opacity:.3}}>{cUA.icon}</div><div style={{color:T.txD,margin:"16px 0"}}>No entries. Chat then Scan.</div></div>
-        :<div style={{display:"grid",gridTemplateColumns:mob?"1fr":"repeat(auto-fill,minmax(200,1fr))",gap:mob?8:12}}>{sf.map(t=>(<button key={t.id} onClick={()=>{setCurTopic(t);setCompiledLore(t.generatedLore||t.compiledLore||"");setEditingLore(false);setScr("ucard");}} style={{padding:mob?12:14,background:T.sf,border:"1px solid "+T.bd,borderRadius:10,cursor:"pointer",textAlign:"left",transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
+        :<div style={{display:"grid",gridTemplateColumns:mob?"1fr":"repeat(auto-fill,minmax(200,1fr))",gap:mob?8:12}}>{sf.map(t=>(<button key={t.id} onClick={async()=>{const fresh=await IDB.get("topic:universe:"+cU.id+":"+cUA.id+":"+t.id);const tp=fresh||t;setCurTopic(tp);setCompiledLore(tp.generatedLore||tp.compiledLore||"");setEditingLore(false);setScr("ucard");}} style={{padding:mob?12:14,background:T.sf,border:"1px solid "+T.bd,borderRadius:10,cursor:"pointer",textAlign:"left",transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
             <div style={{fontSize:14,fontWeight:600,color:T.gold}}>{t.name}</div>
             {t.brief&&<div style={{fontSize:11,color:T.txM,lineHeight:1.3,marginTop:2}}>{t.brief.slice(0,80)}</div>}
             {(t.subcategory||(t.tags&&t.tags.length>0))&&<div style={{display:"flex",gap:3,flexWrap:"wrap",marginTop:6}}>{t.subcategory&&<Tag label={t.subcategory} active/>}{(t.tags||[]).slice(0,2).map(tg=><Tag key={tg} label={tg}/>)}</div>}
@@ -1177,7 +1207,7 @@ function App(){
       {uniqueSubs.length>0&&<div style={{marginBottom:12,display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:10,color:T.txD,textTransform:"uppercase"}}>Type:</span><Tag label="All" active={!subFilter} onClick={()=>setSubFilter("")}/>{uniqueSubs.map(s=><Tag key={s} label={s} active={subFilter===s} onClick={()=>setSubFilter(subFilter===s?"":s)}/>)}</div>}
       {yearFilteredTopics.length===0?<div style={{textAlign:"center",padding:40}}><div style={{fontSize:48,opacity:.3}}>{cA.icon}</div><div style={{color:T.txD,margin:"16px 0"}}>No entries{viewYear!==null?" at Year "+viewYear:""}. Chat then Scan.</div></div>
         :<div style={{display:"grid",gridTemplateColumns:mob?"1fr":"repeat(auto-fill,minmax(200,1fr))",gap:mob?8:12}}>{yearFilteredTopics.map(t=>{const dead=t.died_year!==null&&viewYear!==null&&t.died_year<viewYear;
-          return(<button key={t.id} onClick={()=>{setCurTopic(t);setCompiledLore(t.generatedLore||t.compiledLore||"");setEditingLore(false);setScr("card");}} style={{padding:mob?12:14,background:T.sf,border:"1px solid "+T.bd,borderRadius:10,cursor:"pointer",textAlign:"left",transition:"border-color .2s",opacity:dead?.5:1}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
+          return(<button key={t.id} onClick={async()=>{const fresh=await IDB.get("topic:"+cW.id+":"+cA.id+":"+t.id);const tp=fresh||t;setCurTopic(tp);setCompiledLore(tp.generatedLore||tp.compiledLore||"");setEditingLore(false);setScr("card");}} style={{padding:mob?12:14,background:T.sf,border:"1px solid "+T.bd,borderRadius:10,cursor:"pointer",textAlign:"left",transition:"border-color .2s",opacity:dead?.5:1}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}>
             <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>{t.coa&&<CoaImg coa={t.coa} size={32}/>}<div><div style={{fontSize:14,fontWeight:600,color:T.gold}}>{t.name}</div>{t.brief&&<div style={{fontSize:11,color:T.txM,lineHeight:1.3,marginTop:2}}>{t.brief.slice(0,80)}</div>}</div></div>
             {(t.subcategory||t.tags?.length>0)&&<div style={{display:"flex",gap:3,flexWrap:"wrap",marginTop:6}}>{t.subcategory&&<Tag label={t.subcategory} active/>}{(t.tags||[]).slice(0,2).map(tg=><Tag key={tg} label={tg}/>)}</div>}
             {t.source==="azgaar"&&<div style={{fontSize:9,color:T.accent,marginTop:4}}>📍 Map</div>}
@@ -1185,7 +1215,7 @@ function App(){
     </div></>);
 
   if(scr==="card"&&curTopic)return S(<><div style={{padding:px,display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd,flexWrap:mob?"wrap":"nowrap"}}><button onClick={()=>setScr("aspect")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:mob?8:16}}>{"‹"}</button><div style={{flex:1,minWidth:0}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?18:22,fontWeight:700,color:T.gold,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{curTopic.name}</div><div style={{fontSize:11,color:T.txD}}>{cA?.name+" · "+cW?.name}</div></div>
-    {!mob&&<DateBar/>}<div style={{display:"flex",gap:6}}>{cA?.id==="characters"&&<Btn sm v="a" onClick={()=>doSheet(curTopic.name)}>🎭</Btn>}<Btn sm v="s" onClick={()=>{setModIn(curTopic.subcategory||"");setMod({t:"setSub"});}}>📂</Btn><Btn sm v="s" onClick={()=>{setModIn("");setModIn2("");setMod({t:"addTL"});}}>📅</Btn><Btn sm v="s" onClick={()=>{setTagInput("");setMod({t:"addTag"});}}>🏷️</Btn><Btn sm v="d" onClick={async()=>{await db.deleteTopic(cW.id,cA.id,curTopic.id);setTopicList(await db.listTopics(cW.id,cA.id));flash("Deleted");setScr("aspect");}}>Del</Btn></div>{mob&&<div style={{width:"100%",paddingTop:6}}><DateBar/></div>}</div>
+    {!mob&&<DateBar/>}<div style={{display:"flex",gap:6}}>{cA?.id==="characters"&&<Btn sm v="a" onClick={()=>doSheet(curTopic.name)}>🎭</Btn>}<Btn sm v="s" onClick={()=>{setModIn(curTopic.subcategory||"");setMod({t:"setSub"});}}>📂</Btn>{curTopic.mfcg_url&&<Btn sm v="a" onClick={()=>cityFileRef.current?.click()}>🏘️ Import</Btn>}<Btn sm v="s" onClick={()=>{setModIn("");setModIn2("");setMod({t:"addTL"});}}>📅</Btn><Btn sm v="s" onClick={()=>{setTagInput("");setMod({t:"addTag"});}}>🏷️</Btn><Btn sm v="d" onClick={async()=>{await db.deleteTopic(cW.id,cA.id,curTopic.id);setTopicList(await db.listTopics(cW.id,cA.id));flash("Deleted");setScr("aspect");}}>Del</Btn></div>{mob&&<div style={{width:"100%",paddingTop:6}}><DateBar/></div>}</div>
     <div style={{flex:1,overflowY:"auto",padding:mob?"12px 16px":"16px 32px"}}><div style={{maxWidth:820,margin:"0 auto"}}><CardView topic={curTopic} viewYear={viewYear} compiledLore={compiledLore} onRefreshLore={compileLore} onGenerateLore={generateLore} loadingLore={loadingLore} editingLore={editingLore} onEditToggle={()=>setEditingLore(!editingLore)} onSaveLore={(txt,live)=>{if(live){setCompiledLore(txt);}else{saveLoreEdit(txt);}}}/></div></div></>);
 
   if(scr==="charsheet")return S(<><div style={{padding:px,display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("card")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:mob?8:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?18:22,fontWeight:700,color:T.gold}}>Character Sheet</div><div style={{fontSize:11,color:T.txD}}>{cW?.name}</div></div></div>
@@ -1217,7 +1247,7 @@ function App(){
       <div style={{display:"flex",gap:8,marginTop:10}}><Btn onClick={saveSettings}>Save</Btn>{hasKey&&<Btn v="s" onClick={async()=>{setApiKeyInput("");await db.setApiKey(null);setHasKey(false);flash("Removed");}}>Remove</Btn>}</div>
       <div style={{fontSize:11,color:T.txD,marginTop:8}}>{hasKey?"✅ "+providerSel:"⚠️ No key"}</div>
       <div style={{borderTop:"1px solid "+T.bd,marginTop:24,paddingTop:20}}><div style={{fontSize:13,fontWeight:600,color:T.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:1}}>Data</div><div style={{display:"flex",gap:10,flexWrap:"wrap"}}><Btn v="s" onClick={doExport}>📤 Export</Btn><Btn v="s" onClick={()=>setScr("import")}>📥 Import</Btn><Btn v="s" onClick={async()=>{if(navigator.serviceWorker){const regs=await navigator.serviceWorker.getRegistrations();for(const r of regs)await r.unregister();}if(window.caches){const keys=await caches.keys();for(const k of keys)await caches.delete(k);}flash("Cache cleared — reload page");}}>🔄 Clear Cache</Btn><Btn v="d" onClick={()=>setMod({t:"delAll"})}>🗑️</Btn></div></div>
-      <div style={{marginTop:32,fontSize:11,color:T.txD,lineHeight:1.6}}>CelestialForge Desktop v6{"\n"}Universe Hierarchy · Timeline · COA Emblems · MFCG Links{"\n"}Multi-Provider · Auto-scan · Review · Compiled Lore</div>
+      <div style={{marginTop:32,fontSize:11,color:T.txD,lineHeight:1.6}}>CelestialForge Desktop v6.2{"\n"}Universes · Subcategories · Lore Gen · City Maps · Responsive{"\n"}Multi-Provider · Auto-scan · Review · Compiled Lore</div>
     </div></>);
 
   if(scr==="import")return S(<><div style={{padding:px,display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("settings")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:mob?8:16}}>{"‹"}</button><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?18:22,fontWeight:700,color:T.gold}}>Import</div></div>
