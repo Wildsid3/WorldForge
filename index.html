@@ -519,7 +519,7 @@ const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",heade
 // Prompts
 window.buildExtractPrompt=function(aspect,existingSubs){var subStr=existingSubs&&existingSubs.length?',"subcategory":"Pick best fit from: '+existingSubs.join(", ")+' — or create a new one"':',"subcategory":"Suggest an intuitive subcategory for this entry"';return CAT_RULES+'\n\nExtract for "'+aspect.id+'" category. '+aspect.topicPrompt+'.\nFor EACH entity: {"name","brief","tags":[2-5]'+subStr+(aspect.id==="history"?',"hist_type":"battle|death|revolution|birth|nation-formation|tech-advancement|treaty|disaster|general","year":number_or_null':',\"year\":number_or_null')+'}\nReturn ONLY a JSON array. If nothing found: []';};
 window.buildLorePrompt=function(name,wn){return'Compile ALL information about "'+name+'" in "'+wn+'" from the text below into comprehensive prose paragraphs. Include every detail mentioned. Only use provided text.';};
-window.buildGenerateLorePrompt=function(name,fields,bibleTxt,uBibleTxt){var ctx='Generate rich, immersive lore for "'+name+'".\n';if(fields){ctx+='Known facts:\n';for(var k in fields){var v=fields[k];if(v&&v!=='Unknown'&&v!=='?')ctx+=k.replace(/_/g,' ')+': '+(typeof v==='object'?JSON.stringify(v):v)+'\n';}}if(uBibleTxt)ctx+='\nUniverse context:\n'+uBibleTxt+'\n';if(bibleTxt)ctx+='\nWorld context:\n'+bibleTxt+'\n';ctx+='\nWrite 2-4 paragraphs of detailed, evocative lore. Include history, significance, atmosphere. Use provided context only.';return ctx;};
+window.buildGenerateLorePrompt=function(name,fields,bibleTxt,uBibleTxt,aspectId,subcategory,brief,template){var ctx='Generate rich, immersive lore for "'+name+'".\n';ctx+='Category: '+(aspectId||'unknown').replace(/-/g,' ')+'\n';if(subcategory)ctx+='Type: '+subcategory+'\n';if(template)ctx+='Template: '+template+'\n';if(brief)ctx+='Summary: '+brief+'\n';if(fields){ctx+='Known facts:\n';for(var k in fields){var v=fields[k];if(v&&v!=='Unknown'&&v!=='?')ctx+=k.replace(/_/g,' ')+': '+(typeof v==='object'?JSON.stringify(v):v)+'\n';}}if(uBibleTxt)ctx+='\nUniverse context:\n'+uBibleTxt+'\n';if(bibleTxt)ctx+='\nWorld context:\n'+bibleTxt+'\n';ctx+='\nWrite 2-4 paragraphs of detailed, evocative lore specifically about this '+((aspectId||'').includes('character')?'character':(subcategory||template||'entity'))+'. Include history, significance, atmosphere. Use provided context only — do not generate content about other entities.';return ctx;};
 
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
 </script>
@@ -539,7 +539,7 @@ function useIsMobile(bp=767){const[m,setM]=useState(()=>typeof window!=='undefin
 
 // === Shared Components ===
 function Modal({open,title,children,onClose,wide}){const mob=useIsMobile();if(!open)return null;return(<div style={{position:"fixed",inset:0,zIndex:50,display:"flex",alignItems:mob?"flex-end":"center",justifyContent:"center"}} onClick={onClose}><div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.7)"}}/><div style={{position:"relative",background:T.sf,border:"1px solid "+T.bd,borderRadius:mob?"12px 12px 0 0":12,padding:mob?16:24,width:"100%",maxWidth:mob?"100%":(wide?750:420),maxHeight:mob?"85vh":"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>{title&&<div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?18:22,fontWeight:700,color:T.gold,marginBottom:mob?12:16}}>{title}</div>}{children}</div></div>);}
-function Btn({children,onClick,v="p",full,sm,disabled,style:s}){const m={p:{background:T.gold,color:T.bg,fontWeight:600},s:{background:T.sf2,color:T.tx,border:"1px solid "+T.bd},g:{background:"none",color:T.gold},d:{background:T.red,color:"#fff"},a:{background:T.accent,color:T.tx}};return(<button onClick={onClick} disabled={disabled} style={{...m[v],border:m[v].border||"none",padding:sm?"5px 12px":"10px 20px",borderRadius:8,fontSize:sm?12:14,cursor:disabled?"default":"pointer",width:full?"100%":"auto",fontFamily:"inherit",opacity:disabled?0.4:1,...s}}>{children}</button>);}
+function Btn({children,onClick,v="p",full,sm,disabled,style:s,title}){const m={p:{background:T.gold,color:T.bg,fontWeight:600},s:{background:T.sf2,color:T.tx,border:"1px solid "+T.bd},g:{background:"none",color:T.gold},d:{background:T.red,color:"#fff"},a:{background:T.accent,color:T.tx}};return(<button onClick={onClick} disabled={disabled} title={title} style={{...m[v],border:m[v].border||"none",padding:sm?"6px 14px":"10px 20px",borderRadius:8,fontSize:sm?12:14,cursor:disabled?"default":"pointer",width:full?"100%":"auto",fontFamily:"inherit",opacity:disabled?0.4:1,...s}}>{children}</button>);}
 function Tag({label,onClick,active}){return(<span onClick={onClick} style={{display:"inline-block",padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:500,cursor:onClick?"pointer":"default",background:active?T.gold+"33":T.sf2,color:active?T.gold:T.txM,border:"1px solid "+(active?T.gold+"55":T.bd)}}>{label}</span>);}
 function Bub({msg}){const mob=useIsMobile();const u=msg.role==="user";return(<div style={{display:"flex",justifyContent:u?"flex-end":"flex-start",padding:"4px 0",maxWidth:mob?undefined:700}}><div style={{maxWidth:mob?"88%":"75%",padding:mob?"8px 12px":"10px 16px",borderRadius:u?"14px 14px 4px 14px":"14px 14px 14px 4px",background:u?T.gold+"1a":T.sf2,border:"1px solid "+(u?T.gold+"33":T.bd),fontSize:mob?13:14,lineHeight:1.6,whiteSpace:"pre-wrap",wordBreak:"break-word",color:T.tx}}>{msg.content}{msg._filed&&msg._filed.length>0&&<div style={{fontSize:11,color:T.goldD,marginTop:6,borderTop:"1px solid "+T.bd,paddingTop:4}}>{msg._filed.map((f,i)=><div key={i}>{"📁 "+f}</div>)}</div>}</div></div>);}
 function FBox({label,val,fieldKey,onEdit}){
@@ -577,6 +577,103 @@ function TimelineView({timeline,viewYear}){
 }
 
 // === CARD VIEW ===
+// === D&D Beyond Style Character Builder ===
+const CHAR_RACES=["Human","Elf","Dwarf","Halfling","Gnome","Half-Elf","Half-Orc","Tiefling","Dragonborn","Orc","Goliath","Aasimar","Custom"];
+const CHAR_CLASSES=["Fighter","Wizard","Rogue","Cleric","Ranger","Paladin","Barbarian","Bard","Druid","Monk","Sorcerer","Warlock","Artificer","Custom"];
+const CHAR_ALIGNMENTS=["Lawful Good","Neutral Good","Chaotic Good","Lawful Neutral","True Neutral","Chaotic Neutral","Lawful Evil","Neutral Evil","Chaotic Evil"];
+const CHAR_BACKGROUNDS=["Acolyte","Charlatan","Criminal","Entertainer","Folk Hero","Guild Artisan","Hermit","Noble","Outlander","Sage","Sailor","Soldier","Urchin","Custom"];
+function CharBuilder({topic,onSave,onClose}){
+  const f=topic.fields||{};
+  const[step,setStep]=useState(0);
+  const[data,setData]=useState({
+    race:f.race||"",species:f.species||"",gender:f.gender||"",age:f.age||"",
+    charClass:f.charClass||f["class"]||"",subclass:f.subclass||"",level:f.level||"1",
+    str:f.str||"10",dex:f.dex||"10",con:f.con||"10",int:f.int||"10",wis:f.wis||"10",cha:f.cha||"10",
+    background:f.background||"",alignment:f.alignment||"",ideals:f.ideals||"",bonds:f.bonds||"",flaws:f.flaws||"",
+    height:f.height||"",weight:f.weight||"",eyes:f.eyes||"",hair:f.hair||"",skin:f.skin||"",distinguishing:f.distinguishing||"",
+    traits:f.traits||f.personality||"",motivations:f.motivations||"",fears:f.fears||"",quirks:f.quirks||"",
+    equipment:f.equipment||"",skills:f.skills||"",languages:f.languages||"",proficiencies:f.proficiencies||"",
+    history:f.history||f.personal||"",connections:f.connections||f.relationships||""
+  });
+  const u=(k,v)=>setData(d=>({...d,[k]:v}));
+  const iS={width:"100%",padding:"8px 12px",borderRadius:6,border:"1px solid "+T.bd,background:T.sf,color:T.tx,fontSize:13,fontFamily:"inherit",outline:"none"};
+  const label=(t)=><div style={{fontSize:10,color:T.goldD,textTransform:"uppercase",letterSpacing:1,marginBottom:4,marginTop:10}}>{t}</div>;
+  const dd=(val,opts,key)=><select value={val} onChange={e=>u(key,e.target.value)} style={iS}><option value="">— Select —</option>{opts.map(o=><option key={o} value={o}>{o}</option>)}</select>;
+  const inp=(key,ph)=><input value={data[key]} onChange={e=>u(key,e.target.value)} placeholder={ph} style={iS}/>;
+  const area=(key,ph,rows)=><textarea value={data[key]} onChange={e=>u(key,e.target.value)} placeholder={ph} rows={rows||2} style={{...iS,resize:"vertical",lineHeight:1.5}}/>;
+  const abilityBlock=(key,name)=><div style={{textAlign:"center",padding:8,background:T.bg,borderRadius:8,border:"1px solid "+T.bd}}>
+    <div style={{fontSize:9,color:T.goldD,textTransform:"uppercase"}}>{name}</div>
+    <input type="number" value={data[key]} onChange={e=>u(key,e.target.value)} style={{width:50,textAlign:"center",background:T.sf,border:"1px solid "+T.bd,borderRadius:4,color:T.gold,fontSize:18,fontWeight:700,padding:4,fontFamily:"inherit",outline:"none"}}/>
+    <div style={{fontSize:11,color:T.txD}}>{data[key]>=10?"+":""}{Math.floor((parseInt(data[key])||10-10)/2)}</div>
+  </div>;
+
+  const steps=[
+    {title:"Race & Identity",icon:"🧬",content:<>
+      {label("Race / Species")}{dd(data.race,CHAR_RACES,"race")}
+      {data.race==="Custom"&&<>{label("Custom Species")}{inp("species","e.g. Taniwha, Patupaiarehe")}</>}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <div>{label("Gender")}{inp("gender","e.g. Male, Female, Non-binary")}</div>
+        <div>{label("Age")}{inp("age","e.g. 34, Ancient")}</div>
+      </div>
+    </>},
+    {title:"Class & Role",icon:"⚔️",content:<>
+      {label("Class")}{dd(data.charClass,CHAR_CLASSES,"charClass")}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <div>{label("Subclass / Specialisation")}{inp("subclass","e.g. Battlemaster, Evocation")}</div>
+        <div>{label("Level")}{inp("level","1")}</div>
+      </div>
+    </>},
+    {title:"Abilities",icon:"💪",content:<>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginTop:8}}>
+        {abilityBlock("str","Strength")}{abilityBlock("dex","Dexterity")}{abilityBlock("con","Constitution")}
+        {abilityBlock("int","Intelligence")}{abilityBlock("wis","Wisdom")}{abilityBlock("cha","Charisma")}
+      </div>
+    </>},
+    {title:"Background",icon:"📜",content:<>
+      {label("Background")}{dd(data.background,CHAR_BACKGROUNDS,"background")}
+      {label("Alignment")}{dd(data.alignment,CHAR_ALIGNMENTS,"alignment")}
+      {label("Ideals")}{area("ideals","What drives this character?")}
+      {label("Bonds")}{area("bonds","Who or what are they connected to?")}
+      {label("Flaws")}{area("flaws","What are their weaknesses?")}
+    </>},
+    {title:"Appearance",icon:"👤",content:<>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <div>{label("Height")}{inp("height","e.g. 5'10\", Tall")}</div>
+        <div>{label("Weight")}{inp("weight","e.g. 170 lbs, Heavy-set")}</div>
+        <div>{label("Eyes")}{inp("eyes","e.g. Green, Glowing amber")}</div>
+        <div>{label("Hair")}{inp("hair","e.g. Black, Long braided")}</div>
+      </div>
+      {label("Skin")}{inp("skin","e.g. Bronze, Scarred")}
+      {label("Distinguishing Features")}{area("distinguishing","Scars, tattoos, markings, mannerisms...")}
+    </>},
+    {title:"Personality",icon:"🎭",content:<>
+      {label("Personality Traits")}{area("traits","Two personality traits...",3)}
+      {label("Motivations")}{area("motivations","What do they want?")}
+      {label("Fears")}{area("fears","What are they afraid of?")}
+      {label("Quirks")}{area("quirks","Habits, catchphrases, mannerisms...")}
+    </>},
+    {title:"Skills & Equipment",icon:"🎒",content:<>
+      {label("Equipment / Inventory")}{area("equipment","Weapons, armour, items...",3)}
+      {label("Skills & Proficiencies")}{area("proficiencies","Skills they excel at...")}
+      {label("Languages")}{area("languages","Languages spoken...")}
+    </>},
+    {title:"History",icon:"📖",content:<>
+      {label("Personal History")}{area("history","Their story so far...",5)}
+      {label("Connections & Relationships")}{area("connections","NPCs, factions, places they're tied to...",3)}
+    </>}
+  ];
+  const save=()=>{const fields={...topic.fields,...data};if(data.race==="Custom"&&data.species)fields.race=data.species;fields["class"]=data.charClass;fields.personal=data.traits;fields.relationships=data.connections;onSave(fields);};
+  const cur=steps[step];
+  return(<div style={{maxHeight:"80vh",display:"flex",flexDirection:"column"}}>
+    <div style={{display:"flex",gap:4,padding:"0 0 12px",overflowX:"auto",flexShrink:0}}>{steps.map((s,i)=><button key={i} onClick={()=>setStep(i)} style={{padding:"6px 10px",background:i===step?T.gold+"22":"none",border:i===step?"1px solid "+T.gold:"1px solid transparent",borderRadius:6,cursor:"pointer",fontSize:11,color:i===step?T.gold:i<step?T.accent:T.txD,whiteSpace:"nowrap",fontFamily:"inherit"}}>{s.icon+" "+s.title}</button>)}</div>
+    <div style={{flex:1,overflowY:"auto",minHeight:200}}>{cur.content}</div>
+    <div style={{display:"flex",gap:8,paddingTop:12,borderTop:"1px solid "+T.bd,flexShrink:0}}>
+      {step>0&&<Btn sm v="s" onClick={()=>setStep(step-1)}>← Back</Btn>}
+      <div style={{flex:1}}/>
+      {step<steps.length-1?<Btn sm onClick={()=>setStep(step+1)}>Next →</Btn>:<Btn sm onClick={()=>{save();onClose();}}>✓ Save Character</Btn>}
+    </div>
+  </div>);}
+
 // === NPC System ===
 const NPC_OCCUPATIONS=["Merchant","Blacksmith","Innkeeper","Guard","Farmer","Healer","Scholar","Priest","Thief","Hunter","Noble","Sailor","Miner","Baker","Fisher","Soldier","Bard","Alchemist","Tailor","Carpenter","Other"];
 const NPC_BACKGROUNDS=["Commoner","Noble","Criminal","Outlander","Sage","Soldier","Artisan","Entertainer","Hermit","Acolyte","Folk Hero","Exile","Orphan","Other"];
@@ -1178,7 +1275,7 @@ function App(){
   const scanAllUniverse=async()=>{if(!cU)return;setBusy(true);let total=0;for(const a of UNIVERSE_ASPECTS){setScanNotif("Scanning "+a.name+"...");const r=await scanUniverseAspect(cU.id,a,false);total+=r.added||0;}await loadUAspCounts(cU.id);setScanNotif("");setBusy(false);flash("Done: +"+total);};
   const pushLoreHistory=(topic,newText,type)=>{const hist=topic.loreHistory||[];const prev=type==="generate"?topic.generatedLore:topic.compiledLore;if(prev&&prev!==newText)hist.push({text:prev,type,timestamp:new Date().toISOString()});while(hist.length>5)hist.shift();return hist;};
   const compileULore=async()=>{if(!curTopic||!cU)return;setLoadingLore(true);const all=await db.gatherAllUniverseText(cU.id);const resp=await aiCall(window.buildLorePrompt(curTopic.name,cU.name),[{role:"user",content:all.slice(0,15000)}],2048);const hist=pushLoreHistory(curTopic,resp,"compile");setCompiledLore(resp);const t={...curTopic,compiledLore:resp,loreHistory:hist};setCurTopic(t);await db.saveUniverseTopic(t);setLoadingLore(false);setEditingLore(false);};
-  const generateULore=async()=>{if(!curTopic||!cU)return;setLoadingLore(true);const ubt=await db.getUniverseBibleText(cU.id);const sys=window.buildGenerateLorePrompt(curTopic.name,curTopic.fields,"",ubt);const resp=await aiCall(sys,[{role:"user",content:"Generate lore now."}],2048);const hist=pushLoreHistory(curTopic,resp,"generate");const t={...curTopic,generatedLore:resp,loreHistory:hist};setCurTopic(t);await db.saveUniverseTopic(t);setCompiledLore(resp);setLoadingLore(false);setEditingLore(false);};
+  const generateULore=async()=>{if(!curTopic||!cU)return;setLoadingLore(true);const ubt=await db.getUniverseBibleText(cU.id);const sys=window.buildGenerateLorePrompt(curTopic.name,curTopic.fields,"",ubt,curTopic.aspect_id,curTopic.subcategory,curTopic.brief,curTopic.template);const resp=await aiCall(sys,[{role:"user",content:"Generate lore for this "+curTopic.aspect_id.replace(/-/g," ")+" entry specifically."}],2048);const hist=pushLoreHistory(curTopic,resp,"generate");const t={...curTopic,generatedLore:resp,loreHistory:hist};setCurTopic(t);await db.saveUniverseTopic(t);setCompiledLore(resp);setLoadingLore(false);setEditingLore(false);};
   const doSheet=async(name)=>{setBusy(true);setScr("charsheet");
     const text=await db.gatherAspectText(cW.id,"characters");const bible=await db.getBible(cW.id);
     const sys="Create a Baldur's Gate style character sheet for \""+name+"\" in \""+cW.name+"\". Use ONLY conversation data. For unknowns write \"Unknown\". Include: Name, Race, Class, Alignment, Level, Stats, Background, Traits, Abilities, Equipment, Relationships, Description, Notes.";
@@ -1187,7 +1284,7 @@ function App(){
   };
   const exitChat=async()=>{if(uc){setCC(null);setUc(false);if(cUA&&cU){goUniverseAspect(cUA);}else if(cU){goUniverse(cU);}else{goMain();}return;}const pa=cA,pw=cW;if(!gen&&!wc&&pw&&pa&&cC?.messages?.length>1){setScanNotif("Auto-scanning...");setTimeout(async()=>{await scanAspect(pw.id,pa,false);await loadAspCounts(pw.id);setScanNotif("Done");setTimeout(()=>setScanNotif(""),2000);},100);}setCC(null);setScr(gen?"general":(wc?"worldchatlist":"aspect"));};
   const compileLore=async()=>{if(!curTopic||!cW)return;setLoadingLore(true);const all=await db.gatherAllText(cW.id);const resp=await aiCall(window.buildLorePrompt(curTopic.name,cW.name),[{role:"user",content:all.slice(0,15000)}],2048);const hist=pushLoreHistory(curTopic,resp,"compile");setCompiledLore(resp);const t={...curTopic,compiledLore:resp,loreHistory:hist};setCurTopic(t);await db.saveTopic(t);setLoadingLore(false);setEditingLore(false);};
-  const generateLore=async()=>{if(!curTopic||!cW)return;setLoadingLore(true);const bible=await db.getBible(cW.id);const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"] "+Object.entries(e).map(([k,v])=>k+":"+v).join(", ")).join("\n");let ubt="";if(cW.useUniverseContext&&cW.universe_id)ubt=await db.getUniverseBibleText(cW.universe_id);const sys=window.buildGenerateLorePrompt(curTopic.name,curTopic.fields,bt,ubt);const resp=await aiCall(sys,[{role:"user",content:"Generate lore now."}],2048);const hist=pushLoreHistory(curTopic,resp,"generate");const t={...curTopic,generatedLore:resp,loreHistory:hist};setCurTopic(t);await db.saveTopic(t);setCompiledLore(resp);setLoadingLore(false);setEditingLore(false);};
+  const generateLore=async()=>{if(!curTopic||!cW)return;setLoadingLore(true);const bible=await db.getBible(cW.id);const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"] "+Object.entries(e).map(([k,v])=>k+":"+v).join(", ")).join("\n");let ubt="";if(cW.useUniverseContext&&cW.universe_id)ubt=await db.getUniverseBibleText(cW.universe_id);const sys=window.buildGenerateLorePrompt(curTopic.name,curTopic.fields,bt,ubt,curTopic.aspect_id,curTopic.subcategory,curTopic.brief,curTopic.template);const resp=await aiCall(sys,[{role:"user",content:"Generate lore for this "+curTopic.aspect_id.replace(/-/g," ")+" entry specifically."}],2048);const hist=pushLoreHistory(curTopic,resp,"generate");const t={...curTopic,generatedLore:resp,loreHistory:hist};setCurTopic(t);await db.saveTopic(t);setCompiledLore(resp);setLoadingLore(false);setEditingLore(false);};
   const saveLoreEdit=async(text)=>{if(!curTopic)return;const field=curTopic.generatedLore!==undefined?"generatedLore":"compiledLore";const t={...curTopic,[field]:text};setCurTopic(t);setCompiledLore(text);if(cW)await db.saveTopic(t);else if(cU)await db.saveUniverseTopic(t);setEditingLore(false);flash("Saved");};
   const handleFieldEdit=async(fieldKey,value)=>{if(!curTopic)return;const t={...curTopic,fields:{...(curTopic.fields||{}),[fieldKey]:value}};setCurTopic(t);if(cW)await db.saveTopic(t);else if(cU)await db.saveUniverseTopic(t);flash("Updated");};
   const handleNpcUpdate=async(npcs)=>{if(!curTopic||!cW)return;const t={...curTopic,npcs};setCurTopic(t);await db.saveTopic(t);};
@@ -1385,6 +1482,9 @@ function App(){
       {mod?.dialogueText?<div style={{fontFamily:"monospace",fontSize:13,color:T.txM,lineHeight:1.7,whiteSpace:"pre-wrap",maxHeight:500,overflowY:"auto",background:T.bg,padding:16,borderRadius:8,border:"1px solid "+T.bd}}>{mod.dialogueText}</div>:<div style={{textAlign:"center",padding:20,color:T.txD}}>Generating dialogue...</div>}
       <Btn full v="s" onClick={()=>setMod(null)} style={{marginTop:12}}>Close</Btn>
     </Modal>
+    <Modal open={mod?.t==="charBuilder"} title="Character Builder" onClose={()=>setMod(null)} wide>
+      {curTopic&&<CharBuilder topic={curTopic} onSave={async(fields)=>{const t={...curTopic,fields};setCurTopic(t);if(cW)await db.saveTopic(t);else if(cU)await db.saveUniverseTopic(t);flash("Character saved!");}} onClose={()=>setMod(null)}/>}
+    </Modal>
     <input ref={svgFileRef} type="file" accept=".svg" style={{display:"none"}} onChange={handleSvgFile}/>
     <input ref={jsonFileRef} type="file" accept=".json" style={{display:"none"}} onChange={handleJsonFile}/>
     <input ref={mapFileRef} type="file" accept=".map,.txt" style={{display:"none"}} onChange={handleMapFile}/>
@@ -1478,7 +1578,7 @@ function App(){
     <div style={{flex:1,minWidth:0}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?18:26,fontWeight:700,color:T.gold,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cW.name}</div>{cW.useUniverseContext&&<div style={{fontSize:10,color:T.accent}}>🔗 Universe context active</div>}</div>
     {!mob&&<DateBar/>}
     {cW.universe_id&&<Btn sm v={cW.useUniverseContext?"a":"s"} onClick={toggleUniverseCtx} style={{fontSize:10}}>🔗</Btn>}
-    <Btn sm v="g" onClick={openBible}>📖</Btn><Btn sm v="s" onClick={async()=>{setBusy(true);setDashData(await db.getWorldStats(cW.id));setBusy(false);setScr("dashboard");}}>📊</Btn><Btn sm v="s" onClick={()=>{setSearchQ("");setSearchResults([]);setScr("search");}}>🔎</Btn><Btn sm v="s" onClick={doAudit} disabled={busy}>🩺</Btn>{hasMapData&&<Btn sm v="a" onClick={goMap}>🗺️</Btn>}<Btn sm v="s" onClick={()=>setMod({t:"mapImport"})}>📥</Btn><Btn sm v="a" onClick={scanAll} disabled={busy}>{busy?"...":"🔍"}</Btn>
+    <Btn sm v="g" title="World Bible" onClick={openBible}>📖</Btn><Btn sm v="s" title="Dashboard & Stats" onClick={async()=>{setBusy(true);setDashData(await db.getWorldStats(cW.id));setBusy(false);setScr("dashboard");}}>📊</Btn><Btn sm v="s" title="Search All Topics" onClick={()=>{setSearchQ("");setSearchResults([]);setScr("search");}}>🔎</Btn><Btn sm v="s" title="AI World Audit" onClick={doAudit} disabled={busy}>🩺</Btn>{hasMapData&&<Btn sm v="a" title="View Map" onClick={goMap}>🗺️</Btn>}<Btn sm v="s" title="Import Map Data" onClick={()=>setMod({t:"mapImport"})}>📥</Btn><Btn sm v="a" title="Scan All Aspects" onClick={scanAll} disabled={busy}>{busy?"...":"🔍"}</Btn>
     {mob&&<div style={{width:"100%",paddingTop:6}}><DateBar/></div>}</div>
     <div style={{flex:1,overflowY:"auto",padding:px2}}>
       <button onClick={goWorldChat} style={{width:"100%",padding:mob?14:20,background:"linear-gradient(135deg,"+T.sf+","+T.sf2+")",border:"2px solid "+T.bd,borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:mob?12:20,transition:"border-color .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?16:20,fontWeight:700,color:T.gold}}>⚒️ World Chat</div><div style={{fontSize:12,color:T.txM}}>Open discussion — auto-categorizes</div></button>
@@ -1506,7 +1606,7 @@ function App(){
     </div></>);
 
   if(scr==="card"&&curTopic)return S(<><div style={{padding:px,display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd,flexWrap:mob?"wrap":"nowrap"}}><button onClick={()=>setScr("aspect")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:mob?8:16}}>{"‹"}</button><div style={{flex:1,minWidth:0}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?18:22,fontWeight:700,color:T.gold,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{curTopic.name}</div><div style={{fontSize:11,color:T.txD}}>{cA?.name+" · "+cW?.name}</div></div>
-    {!mob&&<DateBar/>}<div style={{display:"flex",gap:6}}>{cA?.id==="characters"&&<><Btn sm v="a" onClick={()=>doSheet(curTopic.name)}>🎭</Btn><Btn sm v="a" onClick={doNpcDialogue} disabled={busy}>💬</Btn></>}<Btn sm v="s" onClick={()=>{setRelSearch("");setRelLabel("");setMod({t:"addRel"});}}>🔗</Btn><Btn sm v="s" onClick={()=>{setModIn(curTopic.subcategory||"");setMod({t:"setSub"});}}>📂</Btn>{curTopic.mfcg_url&&<Btn sm v="a" onClick={()=>cityFileRef.current?.click()}>🏘️</Btn>}<Btn sm v="s" onClick={()=>{setModIn("");setModIn2("");setMod({t:"addTL"});}}>📅</Btn><Btn sm v="s" onClick={()=>{setTagInput("");setMod({t:"addTag"});}}>🏷️</Btn><Btn sm v="d" onClick={async()=>{await db.deleteTopic(cW.id,cA.id,curTopic.id);setTopicList(await db.listTopics(cW.id,cA.id));flash("Deleted");setScr("aspect");}}>Del</Btn></div>{mob&&<div style={{width:"100%",paddingTop:6}}><DateBar/></div>}</div>
+    {!mob&&<DateBar/>}<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{cA?.id==="characters"&&<><Btn sm v="p" title="Character Builder" onClick={()=>setMod({t:"charBuilder"})}>🧬 Build</Btn><Btn sm v="a" title="Character Sheet" onClick={()=>doSheet(curTopic.name)}>{mob?"🎭":"🎭 Sheet"}</Btn><Btn sm v="a" title="Generate NPC Dialogue" onClick={doNpcDialogue} disabled={busy}>{mob?"💬":"💬 Dialogue"}</Btn></>}<Btn sm v="s" title="Add Relationship" onClick={()=>{setRelSearch("");setRelLabel("");setMod({t:"addRel"});}}>{mob?"🔗":"🔗 Link"}</Btn><Btn sm v="s" title="Set Subcategory" onClick={()=>{setModIn(curTopic.subcategory||"");setMod({t:"setSub"});}}>{mob?"📂":"📂 Type"}</Btn>{curTopic.mfcg_url&&<Btn sm v="a" title="Import MFCG City Data" onClick={()=>cityFileRef.current?.click()}>{mob?"🏘️":"🏘️ City"}</Btn>}<Btn sm v="s" title="Add Timeline Event" onClick={()=>{setModIn("");setModIn2("");setMod({t:"addTL"});}}>{mob?"📅":"📅 Event"}</Btn><Btn sm v="s" title="Add Tag" onClick={()=>{setTagInput("");setMod({t:"addTag"});}}>{mob?"🏷️":"🏷️ Tag"}</Btn><Btn sm v="d" title="Delete Topic" onClick={async()=>{await db.deleteTopic(cW.id,cA.id,curTopic.id);setTopicList(await db.listTopics(cW.id,cA.id));flash("Deleted");setScr("aspect");}}>Del</Btn></div>{mob&&<div style={{width:"100%",paddingTop:6}}><DateBar/></div>}</div>
     <div style={{flex:1,overflowY:"auto",padding:mob?"12px 16px":"16px 32px"}}><div style={{maxWidth:820,margin:"0 auto"}}><CardView topic={curTopic} viewYear={viewYear} compiledLore={compiledLore} onRefreshLore={compileLore} onGenerateLore={generateLore} loadingLore={loadingLore} editingLore={editingLore} onEditToggle={()=>setEditingLore(!editingLore)} onSaveLore={(txt,live)=>{if(live){setCompiledLore(txt);}else{saveLoreEdit(txt);}}} onFieldEdit={handleFieldEdit} onNpcUpdate={handleNpcUpdate} onNpcGenerate={handleNpcGenerate} onNpcBulkGenerate={handleNpcBulkGenerate} npcBusy={busy}/></div></div></>);
 
   if(scr==="charsheet")return S(<><div style={{padding:px,display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("card")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:mob?8:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?18:22,fontWeight:700,color:T.gold}}>Character Sheet</div><div style={{fontSize:11,color:T.txD}}>{cW?.name}</div></div></div>
