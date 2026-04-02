@@ -1,5 +1,5 @@
-const CACHE = 'celestialforge-v16';
-const CDN_CACHE = 'celestialforge-cdn-v16';
+const CACHE = 'celestialforge-v17';
+const CDN_CACHE = 'celestialforge-cdn-v17';
 const ASSETS = ['/', '/index.html', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', e => {
@@ -31,6 +31,11 @@ self.addEventListener('fetch', e => {
   if (url.hostname === 'api.anthropic.com') return;
   if (url.hostname === 'api.deepseek.com') return;
   if (url.pathname.includes('/v1/') || url.pathname.includes('/chat/')) return;
+
+  // ComfyUI — runs locally on port 8188, must not be cached or intercepted
+  if ((url.hostname === 'localhost' || url.hostname === '127.0.0.1') && url.port === '8188') return;
+  // Also pass through any custom ComfyUI host on non-standard ports
+  if (url.pathname.startsWith('/prompt') || url.pathname.startsWith('/history') || url.pathname.startsWith('/view')) return;
 
   // CDN resources — network first, cache fallback, separate cache with version
   if (url.hostname !== location.hostname) {
