@@ -409,7 +409,13 @@ window.db={
     const noteCount=(await this.listNotes(wid)).length;
     // Chat count
     let chatCount=0;for(const a of ASPECTS)chatCount+=(await this.listChats(wid,a.id)).length;chatCount+=(await this.listChats(wid,"__worldchat__")).length;
-    return{totalTopics:all.length,totalPop,aspectCounts,emptyAspects,recentTopics:recentTopics.slice(0,10),topSubs,totalRels:Math.floor(totalRels/2),orphanTopics:orphans.slice(0,15),orphanCount:orphans.length,needsLore:needsLore.slice(0,10),needsLoreCount:needsLore.length,emptyFields:emptyFields.slice(0,10),emptyFieldsCount:emptyFields.length,clusters:clusters.slice(0,5),noteCount,chatCount};},
+    // Context budget analysis (Phase 1)
+    const ctxBudget=await window.contextWeight.analyze(wid);
+    // Draft marker count (Phase 2)
+    const draftMarkers=await window.publication.countWorldMarkers(wid);
+    // Asset completion (Phase 5)
+    const assetStats=await window.assetTracker.worldStats(wid);
+    return{totalTopics:all.length,totalPop,aspectCounts,emptyAspects,recentTopics:recentTopics.slice(0,10),topSubs,totalRels:Math.floor(totalRels/2),orphanTopics:orphans.slice(0,15),orphanCount:orphans.length,needsLore:needsLore.slice(0,10),needsLoreCount:needsLore.length,emptyFields:emptyFields.slice(0,10),emptyFieldsCount:emptyFields.length,clusters:clusters.slice(0,5),noteCount,chatCount,ctxBudget,draftMarkers,assetStats};},
   async getTopicContext(wid,topicName){const all=await this.listAllTopics(wid);const matches=[];for(const t of all){if(t.name===topicName||t.brief?.includes(topicName)||(t.tags||[]).includes(normTag(topicName))){matches.push(t);}}return matches;},
   // Map
   async saveMapSvg(wid,svg){return IDB.set("mapsvg:"+wid,svg);},
@@ -536,29 +542,60 @@ window.db={
     }
     return {migrated:0};
   },
-  // === SMART CONTEXT (Phase 3) ===
+  // === SMART CONTEXT (Phase 3 — Priority Context Assembly) ===
+  // Weight-aware: focus entity full → linked entities full → same-category summaries → budget stop
   async buildSmartContext(wid,userMsg,currentAspect){
     const all=await this.listAllTopics(wid);if(!all.length)return{mentioned:[],contextStr:""};
     const msgLower=userMsg.toLowerCase();
-    // Find topics mentioned by name in the user's message
+    // Step 1: Find focus entities — topics mentioned by name in user message
     const mentioned=all.filter(t=>t.name&&t.name.length>2&&msgLower.includes(t.name.toLowerCase()));
     if(!mentioned.length)return{mentioned:[],contextStr:""};
-    // For each mentioned topic, build rich context including its fields + related topics
+    // Step 2: Token budget (30% of model context window)
+    let modelKey=await IDB.get("_context_model");
+    if(!modelKey){const prov=await this.getProvider();modelKey=prov==="deepseek"?"deepseek":prov==="claude"?"claude":"local";}
+    const modelTokens=(window.CONTEXT_MODELS[modelKey]||window.CONTEXT_MODELS.claude).tokens;
+    const budget=Math.floor(modelTokens*0.30);let used=0;
+    const est=(text)=>Math.ceil((text||"").length/4);
+    // Step 3: Focus entities — full detail (all fields, full lore, relations, timeline)
     const seen=new Set();const blocks=[];
-    for(const t of mentioned.slice(0,5)){if(seen.has(t.id))continue;seen.add(t.id);
+    for(const t of mentioned.slice(0,5)){
+      if(seen.has(t.id))continue;seen.add(t.id);
       let block="["+t.name+"] ("+t.aspect_id+(t.subcategory?" / "+t.subcategory:"")+")";
       if(t.brief)block+="\n  "+t.brief;
-      const f=t.fields||{};const fEntries=Object.entries(f).filter(([k,v])=>v&&v!=="Unknown"&&v!=="?").slice(0,8);
-      if(fEntries.length)block+="\n  Fields: "+fEntries.map(([k,v])=>k.replace(/_/g," ")+": "+(typeof v==="object"?JSON.stringify(v):String(v).slice(0,80))).join("; ");
-      const lore=t.generatedLore||t.compiledLore;if(lore)block+="\n  Lore: "+lore.slice(0,200)+(lore.length>200?"...":"");
-      // Add related topics
-      if(t.relations&&t.relations.length>0){block+="\n  Relations: "+t.relations.slice(0,8).map(r=>r.targetName+" ("+r.relationship+")").join(", ");
-        // Pull 1st-degree related topic briefs
-        for(const r of t.relations.slice(0,4)){if(seen.has(r.targetId))continue;
-          const rel=all.find(x=>x.id===r.targetId);if(rel){seen.add(rel.id);
-            block+="\n    → "+rel.name+(rel.brief?" — "+rel.brief:"");}}}
-      blocks.push(block);}
-    return{mentioned,contextStr:blocks.length?"\n\nTOPIC CONTEXT (referenced entities — check for contradictions):\n"+blocks.join("\n\n"):""};},
+      const f=t.fields||{};const fE=Object.entries(f).filter(([k,v])=>v&&v!=="Unknown"&&v!=="?");
+      if(fE.length)block+="\n  Fields: "+fE.map(([k,v])=>k.replace(/_/g," ")+": "+(typeof v==="object"?JSON.stringify(v):String(v).slice(0,120))).join("; ");
+      const lore=t.generatedLore||t.compiledLore;if(lore)block+="\n  Lore: "+lore;
+      if(t.relations&&t.relations.length>0)block+="\n  Relations: "+t.relations.map(r=>(r.targetName||r.targetId)+" ("+r.relationship+")").join(", ");
+      if(t.timeline&&t.timeline.length>0)block+="\n  Timeline: "+t.timeline.slice(0,5).map(e=>"Y"+e.year+": "+e.event).join("; ");
+      const cost=est(block);if(used+cost>budget)break;
+      used+=cost;blocks.push(block);
+    }
+    // Step 4: Linked entities — use summary if available, otherwise lore excerpt
+    const linkedIds=new Set();
+    for(const t of mentioned){for(const r of(t.relations||[])){if(!seen.has(r.targetId))linkedIds.add(r.targetId);}}
+    for(const lid of linkedIds){
+      if(used>=budget)break;const t=all.find(x=>x.id===lid);if(!t)continue;seen.add(t.id);
+      let block="  → ["+t.name+"] ("+t.aspect_id+(t.subcategory?" / "+t.subcategory:"")+")";
+      if(t.brief)block+="\n    "+t.brief;
+      const f=t.fields||{};const fE=Object.entries(f).filter(([k,v])=>v&&v!=="Unknown"&&v!=="?").slice(0,6);
+      if(fE.length)block+="\n    Fields: "+fE.map(([k,v])=>k.replace(/_/g," ")+": "+(typeof v==="object"?JSON.stringify(v):String(v).slice(0,80))).join("; ");
+      // Prefer AI summary over full lore for linked entities (saves budget)
+      if(t.summary)block+="\n    Summary: "+t.summary;
+      else{const lore=t.generatedLore||t.compiledLore;if(lore)block+="\n    Lore: "+lore.slice(0,300)+(lore.length>300?"...":"");}
+      const cost=est(block);if(used+cost>budget)break;
+      used+=cost;blocks.push(block);
+    }
+    // Step 5: Same-category summaries (first sentence of brief) — fill remaining budget
+    if(currentAspect){
+      const sameAsp=all.filter(t=>t.aspect_id===currentAspect&&!seen.has(t.id)&&t.brief);
+      if(sameAsp.length>0){
+        let sumBlock="\n[Other "+currentAspect.replace(/-/g," ")+" entries]:";
+        for(const t of sameAsp.slice(0,20)){
+          const fs=(t.brief||"").split(/[.!?]\s/)[0];const line="\n  • "+t.name+" — "+fs;
+          const cost=est(line);if(used+cost>budget)break;used+=cost;sumBlock+=line;}
+        if(sumBlock.includes("•"))blocks.push(sumBlock);}
+    }
+    return{mentioned,contextStr:blocks.length?"\n\nTOPIC CONTEXT (referenced entities — check for contradictions):\n"+blocks.join("\n\n"):"",tokensUsed:used,tokenBudget:budget};},
   // === NOTES (Scratchpad) ===
   async listNotes(wid){const prefix=wid?"note:"+wid+":":"note:global:";const ks=await IDB.list(prefix);const ns=[];for(const k of ks){const n=await IDB.get(k);if(n)ns.push(n);}ns.sort((a,b)=>{if(a.pinned&&!b.pinned)return -1;if(!a.pinned&&b.pinned)return 1;return(b.updated||"").localeCompare(a.updated||"");});return ns;},
   async saveNote(n){n.updated=new Date().toISOString();const prefix=n.world_id?"note:"+n.world_id+":":"note:global:";await IDB.set(prefix+n.id,n);return n;},
@@ -569,6 +606,287 @@ window.db={
   async getCustomEndpoint(){return(await IDB.get("_custom_endpoint"))||"";},async setCustomEndpoint(u){return IDB.set("_custom_endpoint",u);},
   async getComfyHost(){return(await IDB.get("_comfy_host"))||"http://localhost:8188";},async setComfyHost(h){return IDB.set("_comfy_host",h);},
   async getComfyCheckpoint(){return(await IDB.get("_comfy_ckpt"))||"v1-5-pruned-emaonly.ckpt";},async setComfyCheckpoint(c){return IDB.set("_comfy_ckpt",c);},
+};
+
+// === Context Weight Tracker (Phase 1) ===
+// Model context windows in tokens
+window.CONTEXT_MODELS={claude:{name:"Claude (200K)",tokens:200000},deepseek:{name:"DeepSeek (128K)",tokens:128000},local:{name:"Local / 8K",tokens:8000},custom:{name:"Custom (32K)",tokens:32000}};
+window.contextWeight={
+  // Recency multiplier: recent edits get higher weight (more likely to be referenced)
+  recencyMult(updatedAt){if(!updatedAt)return 1.0;const days=(Date.now()-new Date(updatedAt).getTime())/(1000*60*60*24);if(days<7)return 1.2;if(days<30)return 1.0;if(days<90)return 0.8;return 0.6;},
+  // Calculate token weight for a single topic
+  topicWeight(t){const parts=[t.name||"",t.brief||"",t.compiledLore||"",t.generatedLore||""];const fields=t.fields||{};for(const k in fields){const v=fields[k];if(v&&typeof v==="string")parts.push(v);else if(v&&typeof v==="object")parts.push(JSON.stringify(v));}
+    const text=parts.join(" ");const baseTokens=text.length/4.0;const linkTokens=(t.relations||[]).length*50;const tagTokens=(t.tags||[]).length*5;const timelineTokens=(t.timeline||[]).length*30;
+    return Math.round((baseTokens+linkTokens+tagTokens+timelineTokens)*this.recencyMult(t.updated));},
+  // Calculate token weight for bible facts
+  bibleWeight(bible){const f=bible?.facts||{};let tokens=0;for(const cat in f){for(const k in f[cat]){const v=f[cat][k];tokens+=((cat+k+(typeof v==="string"?v:JSON.stringify(v))).length)/4.0;}}return Math.round(tokens);},
+  // Full world budget analysis
+  async analyze(wid){const all=await db.listAllTopics(wid);const bible=await db.getBible(wid);
+    // Per-topic weights
+    const topicWeights=all.map(t=>({id:t.id,name:t.name,aspect_id:t.aspect_id,weight:this.topicWeight(t),updated:t.updated}));
+    topicWeights.sort((a,b)=>b.weight-a.weight);
+    // Per-aspect totals
+    const aspectTotals={};for(const tw of topicWeights){aspectTotals[tw.aspect_id]=(aspectTotals[tw.aspect_id]||0)+tw.weight;}
+    const bibleW=this.bibleWeight(bible);const topicTotal=topicWeights.reduce((s,tw)=>s+tw.weight,0);const totalTokens=topicTotal+bibleW;
+    // Get stored model preference or auto-detect from provider
+    let modelKey=await IDB.get("_context_model");
+    if(!modelKey){const prov=await db.getProvider();modelKey=prov==="deepseek"?"deepseek":prov==="claude"?"claude":"local";}
+    const model=window.CONTEXT_MODELS[modelKey]||window.CONTEXT_MODELS.claude;
+    const pct=Math.min(100,Math.round((totalTokens/model.tokens)*100));
+    return{totalTokens,topicTotal,bibleTokens:bibleW,topicCount:all.length,topicWeights,aspectTotals,modelKey,modelName:model.name,modelTokens:model.tokens,pct,heaviest:topicWeights.slice(0,10)};},
+  // Store model preference
+  async setModel(key){return IDB.set("_context_model",key);}
+};
+
+// === Publication Mode (Phase 2) ===
+// Strips TODO/DRAFT/NOTE markers and exports clean markdown
+window.STRIP_PATTERNS=[
+  /\[TODO[:\s][^\]]*\]/gi, /\[DRAFT[:\s][^\]]*\]/gi, /\[NOTE[:\s][^\]]*\]/gi,
+  /\[WIP[:\s][^\]]*\]/gi, /\[PLACEHOLDER[:\s][^\]]*\]/gi,
+  /\[describe this later\]/gi, /\[needs detail\]/gi, /\[TBD\]/gi,
+  /<!--[\s\S]*?-->/g, /⚠\s*Consistency warning:.*?(?=\n|$)/gi,
+  /\[TODO\]/gi, /\[DRAFT\]/gi, /\[NOTE\]/gi, /\[WIP\]/gi, /\[PLACEHOLDER\]/gi
+];
+window.publication={
+  // Strip all draft markers from text
+  clean(text){if(!text)return"";let t=text;for(const p of window.STRIP_PATTERNS)t=t.replace(p,"");return t.replace(/\n{3,}/g,"\n\n").trim();},
+
+  // Count draft markers in a text block
+  countMarkers(text){if(!text)return 0;let c=0;for(const p of window.STRIP_PATTERNS){const m=text.match(p);if(m)c+=m.length;}return c;},
+
+  // Build the full world markdown export
+  async buildMarkdown(wid){
+    const world=await IDB.get("world:"+wid);const bible=await db.getBible(wid);
+    const wName=world?.name||"Unknown World";
+    let md="# "+wName+"\n\n";
+    if(world?.description)md+="> "+this.clean(world.description)+"\n\n";
+    if(world?.current_year)md+="**Current Year:** "+world.current_year+(world?.calendar_name?" "+world.calendar_name:"")+"\n\n";
+    md+="---\n\n";
+
+    // Bible facts section
+    const facts=bible?.facts||{};const cats=Object.keys(facts).sort();
+    if(cats.length>0){
+      md+="## World Facts\n\n";
+      for(const cat of cats){
+        const entries=facts[cat];const keys=Object.keys(entries);
+        if(keys.length===0)continue;
+        md+="### "+cat.replace(/-/g," ").replace(/\b\w/g,c=>c.toUpperCase())+"\n\n";
+        for(const k of keys)md+="**"+k+":** "+this.clean(String(entries[k]))+"\n\n";
+      }
+      md+="---\n\n";
+    }
+
+    // Topics grouped by aspect group then aspect
+    const allTopics=await db.listAllTopics(wid);
+    for(const grp of window.ASPECT_GROUPS){
+      const grpTopics=allTopics.filter(t=>grp.aspects.includes(t.aspect_id));
+      if(grpTopics.length===0)continue;
+      md+="## "+grp.icon+" "+grp.name+"\n\n";
+
+      for(const aspId of grp.aspects){
+        const asp=window.ASPECTS.find(a=>a.id===aspId);if(!asp)continue;
+        const aspTopics=grpTopics.filter(t=>t.aspect_id===aspId);
+        if(aspTopics.length===0)continue;
+
+        // Group by subcategory
+        const bySub={};for(const t of aspTopics){const sub=t.subcategory||"General";if(!bySub[sub])bySub[sub]=[];bySub[sub].push(t);}
+
+        md+="### "+asp.icon+" "+asp.name+" ("+aspTopics.length+")\n\n";
+        for(const[sub,topics] of Object.entries(bySub).sort()){
+          if(sub!=="General")md+="#### "+sub+"\n\n";
+          for(const t of topics.sort((a,b)=>(a.name||"").localeCompare(b.name||""))){
+            md+="##### "+t.name+"\n\n";
+            if(t.brief)md+="*"+this.clean(t.brief)+"*\n\n";
+            // Fields
+            const fields=t.fields||{};const fKeys=Object.keys(fields).filter(k=>fields[k]&&fields[k]!=="Unknown"&&fields[k]!=="?");
+            if(fKeys.length>0){for(const k of fKeys){const v=fields[k];const label=k.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase());md+="**"+label+":** "+(typeof v==="object"?JSON.stringify(v):this.clean(String(v)))+"\n\n";}}
+            // Lore
+            const lore=t.generatedLore||t.compiledLore;
+            if(lore)md+=this.clean(lore)+"\n\n";
+            // Relations
+            if(t.relations&&t.relations.length>0){
+              const relStrs=t.relations.map(r=>{const target=allTopics.find(x=>x.id===r.targetId);return target?(r.label||"linked to")+" **"+target.name+"**":null;}).filter(Boolean);
+              if(relStrs.length>0)md+="*Connections: "+relStrs.join(", ")+"*\n\n";
+            }
+          }
+        }
+      }
+    }
+    return md;
+  },
+
+  // Count total draft markers across the world
+  async countWorldMarkers(wid){
+    const allTopics=await db.listAllTopics(wid);const bible=await db.getBible(wid);
+    let total=0;
+    for(const t of allTopics){
+      total+=this.countMarkers(t.brief);total+=this.countMarkers(t.compiledLore);total+=this.countMarkers(t.generatedLore);
+      for(const v of Object.values(t.fields||{})){if(typeof v==="string")total+=this.countMarkers(v);}
+    }
+    for(const cat of Object.values(bible?.facts||{})){for(const v of Object.values(cat)){if(typeof v==="string")total+=this.countMarkers(v);}}
+    return total;
+  },
+
+  // Trigger download
+  download(md,worldName){
+    const fn=(worldName||"world").replace(/[^a-zA-Z0-9_-]/g,"_").toLowerCase()+"_published.md";
+    const blob=new Blob([md],{type:"text/markdown"});const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download=fn;a.click();URL.revokeObjectURL(url);
+  }
+};
+
+// === Auto-Summarisation (Phase 4) ===
+// When context budget exceeds threshold, offers to compress heavy entries via AI
+window.summarizer={
+  // Identify topics that are candidates for summarisation (sorted by weight, heaviest first)
+  async candidates(wid,limit=20){
+    const all=await db.listAllTopics(wid);
+    const weighted=all.map(t=>({topic:t,weight:window.contextWeight.topicWeight(t),hasSummary:!!t.summary}))
+      .filter(tw=>tw.weight>100&&!tw.hasSummary) // only unsummarised entries above 100 tokens
+      .sort((a,b)=>b.weight-a.weight);
+    return weighted.slice(0,limit);
+  },
+
+  // Build the AI prompt for summarising a single topic
+  buildPrompt(topic){
+    const parts=["Summarise the following worldbuilding entry into 2-3 concise sentences."];
+    parts.push("Preserve all key facts (names, dates, relationships, stats) but remove atmospheric prose and redundant detail.");
+    parts.push("The summary will be used as context for AI — prioritise factual density over readability.\n");
+    parts.push("Entry: "+topic.name+" ("+topic.aspect_id+")");
+    if(topic.brief)parts.push("Brief: "+topic.brief);
+    const f=topic.fields||{};const fE=Object.entries(f).filter(([k,v])=>v&&v!=="Unknown"&&v!=="?");
+    if(fE.length)parts.push("Fields: "+fE.map(([k,v])=>k.replace(/_/g," ")+": "+(typeof v==="object"?JSON.stringify(v):v)).join("; "));
+    const lore=topic.generatedLore||topic.compiledLore;
+    if(lore)parts.push("Lore:\n"+lore);
+    parts.push("\nWrite ONLY the summary. No preamble, no labels.");
+    return parts.join("\n");
+  },
+
+  // Summarise a single topic via AI and store the result
+  async summariseOne(topic){
+    const prompt=this.buildPrompt(topic);
+    const result=await window.aiCall("You are a precise summariser for worldbuilding data.",
+      [{role:"user",content:prompt}],500);
+    if(result&&!result.startsWith("[")&&!result.startsWith("Error")){
+      topic.summary=result.trim();
+      topic.summary_date=new Date().toISOString();
+      await db.saveTopic(topic);
+      return{ok:true,summary:topic.summary};
+    }
+    return{ok:false,error:result};
+  },
+
+  // Batch summarise multiple topics with progress callback
+  async summariseBatch(topics,onProgress){
+    let done=0;const results=[];
+    for(const t of topics){
+      const r=await this.summariseOne(t);
+      results.push({name:t.name,id:t.id,...r});
+      done++;if(onProgress)onProgress(done,topics.length,t.name);
+    }
+    return results;
+  },
+
+  // Clear a topic's summary (revert to full content for context)
+  async clearSummary(topic){
+    delete topic.summary;delete topic.summary_date;
+    await db.saveTopic(topic);
+  }
+};
+
+// === Asset Status Tracking (Phase 5) ===
+// Tracks which Creative Studio assets have been generated per entity
+window.ASSET_TYPES=[
+  {id:"concept_art",label:"Concept Art",icon:"🎨"},
+  {id:"battle_sprites",label:"Battle Sprites",icon:"🗡️"},
+  {id:"field_sprites",label:"Field Sprites",icon:"🚶"},
+  {id:"theme_music",label:"Theme",icon:"🎵"}
+];
+window.assetTracker={
+  // Get the full manifest for a world
+  async getManifest(wid){return(await IDB.get("assets:"+wid))||{};},
+  // Save the full manifest
+  async saveManifest(wid,manifest){return IDB.set("assets:"+wid,manifest);},
+  // Get asset status for a single entity
+  async getStatus(wid,entityId){const m=await this.getManifest(wid);return m[entityId]||{};},
+  // Toggle an asset type for an entity
+  async toggleAsset(wid,entityId,entityName,assetType){
+    const m=await this.getManifest(wid);
+    if(!m[entityId])m[entityId]={name:entityName,assets:{}};
+    m[entityId].assets[assetType]=!m[entityId].assets[assetType];
+    m[entityId].updated=new Date().toISOString();
+    await this.saveManifest(wid,m);return m[entityId];
+  },
+  // Get completion stats for the whole world
+  async worldStats(wid){
+    const m=await this.getManifest(wid);const entries=Object.values(m);
+    if(!entries.length)return{total:0,complete:0,partial:0,pct:0};
+    const total=entries.length;const typeCount=window.ASSET_TYPES.length;
+    let doneCount=0;let partial=0;
+    for(const e of entries){const done=Object.values(e.assets||{}).filter(Boolean).length;doneCount+=done;if(done>0&&done<typeCount)partial++;else if(done===typeCount)/* fully complete — not partial */;}
+    const pct=Math.round((doneCount/(total*typeCount))*100);
+    return{total,complete:entries.filter(e=>Object.values(e.assets||{}).filter(Boolean).length===typeCount).length,partial,pct};
+  },
+  // Import a manifest JSON (from Creative Studio's asset_manifest.json)
+  async importManifest(wid,json){
+    try{const data=typeof json==="string"?JSON.parse(json):json;await this.saveManifest(wid,data);return{ok:true,count:Object.keys(data).length};}
+    catch(e){return{ok:false,error:e.message};}
+  },
+  // Export manifest as JSON string
+  async exportManifest(wid){return JSON.stringify(await this.getManifest(wid),null,2);},
+  // Check if running in Creative Studio iframe
+  isEmbedded(){try{return window.self!==window.top&&window.parent.location.hostname==="localhost";}catch(e){return window.self!==window.top;}}
+};
+
+// === Forge Rules & LLM Improvements (Phase 6) ===
+// User-defined hard constraints injected into every AI prompt
+window.forgeRules={
+  async get(wid){return(await IDB.get("forge_rules:"+wid))||"";},
+  async set(wid,rules){return IDB.set("forge_rules:"+wid,rules);},
+  async getGlobal(){return(await IDB.get("forge_rules:global"))||"";},
+  async setGlobal(rules){return IDB.set("forge_rules:global",rules);},
+  // Build the rules preamble for injection into system prompts
+  async buildPreamble(wid){
+    const parts=[];
+    const global=await this.getGlobal();if(global.trim())parts.push("GLOBAL RULES:\n"+global.trim());
+    if(wid){
+      const world=await IDB.get("world:"+wid);if(world?.name)parts.push("World: "+world.name);
+      const local=await this.get(wid);if(local.trim())parts.push("WORLD RULES (canon — never contradict):\n"+local.trim());
+      // Bible facts as compact rules
+      const bible=await db.getBible(wid);const facts=bible?.facts||{};
+      const fLines=[];for(const cat in facts){for(const k in facts[cat])fLines.push(cat.replace(/-/g," ")+"/"+k+": "+facts[cat][k]);}
+      if(fLines.length)parts.push("WORLD FACTS (canon):\n"+fLines.join("\n"));
+    }
+    return parts.length?"\n\n"+parts.join("\n\n")+"\n":"";
+  }
+};
+
+// Consistency check — AI-powered contradiction detection on save
+window.consistencyCheck=async function(topic,wid){
+  if(!topic||!wid)return null;
+  const key=await db.getApiKey();if(!key)return null; // Skip if no API key
+  const bible=await db.getBible(wid);const bt=Object.entries(bible?.facts||{}).map(([c,e])=>"["+c+"] "+Object.entries(e).map(([k,v])=>k+":"+v).join(", ")).join("\n");
+  const rules=await window.forgeRules.get(wid);
+  // Build a compact representation of the topic
+  const topicStr=[topic.name+" ("+topic.aspect_id+")",topic.brief||"",
+    ...Object.entries(topic.fields||{}).filter(([k,v])=>v&&v!=="Unknown").map(([k,v])=>k+": "+v),
+    topic.generatedLore||topic.compiledLore||""].filter(Boolean).join("\n");
+  const prompt="Check this worldbuilding entry for contradictions against the world facts and rules below.\n\nENTRY:\n"+topicStr.slice(0,2000)+
+    (bt?"\n\nWORLD FACTS:\n"+bt.slice(0,1500):"")+
+    (rules?"\n\nWORLD RULES:\n"+rules.slice(0,500):"")+
+    "\n\nIf you find contradictions, list each as: ⚠️ [fact] contradicts [fact]. If no contradictions, respond with exactly: ✅ No contradictions found.";
+  const result=await window.aiCall("You are a precise fact-checker for worldbuilding data. Be concise.",[{role:"user",content:prompt}],500);
+  if(!result||result.startsWith("[")||result.startsWith("Error"))return null;
+  return result.trim();
+};
+
+// AI provenance — mark topics as AI-generated or human-written
+window.provenance={
+  markAI(topic,action){topic.provenance=topic.provenance||{};topic.provenance.last_ai_action=action;topic.provenance.last_ai_date=new Date().toISOString();topic.provenance.ai_touched=true;return topic;},
+  markHuman(topic,action){topic.provenance=topic.provenance||{};topic.provenance.last_human_action=action;topic.provenance.last_human_date=new Date().toISOString();return topic;},
+  isAIGenerated(topic){return topic.provenance?.ai_touched&&!topic.provenance?.last_human_date;},
+  wasAITouched(topic){return!!topic.provenance?.ai_touched;},
+  label(topic){if(!topic.provenance)return null;if(topic.provenance.last_human_date&&topic.provenance.ai_touched)return"AI + Human edited";if(topic.provenance.ai_touched)return"AI-generated — verify against your lore";if(topic.provenance.last_human_date)return"Human-written";return null;}
 };
 
 // === Multi-Provider AI ===
@@ -807,6 +1125,28 @@ function NpcSection({npcs,onUpdate,onGenerate,onBulkGenerate,locationName,busy})
     {npcs.length===0&&!adding&&<div style={{fontSize:12,color:T.txD,textAlign:"center",padding:12}}>No residents. Click + Add to create placeholder NPCs.</div>}
   </div>);}
 
+// === Asset Status Row (Phase 5) ===
+function AssetStatusRow({topic}){
+  const[assets,setAssets]=useState({});const[wid,setWid]=useState(null);
+  useEffect(()=>{(async()=>{
+    // Detect world ID from topic key pattern
+    const keys=await IDB.list("world:");const worlds=[];
+    for(const k of keys){const w=await IDB.get(k);if(w)worlds.push(w);}
+    // Find which world owns this topic by checking all worlds
+    for(const w of worlds){const all=await db.listAllTopics(w.id);if(all.find(t=>t.id===topic.id)){setWid(w.id);const s=await window.assetTracker.getStatus(w.id,topic.id);setAssets(s.assets||{});break;}}
+  })();},[topic.id]);
+  if(!wid)return null;
+  const toggle=async(type)=>{const r=await window.assetTracker.toggleAsset(wid,topic.id,topic.name,type);setAssets(r.assets||{});};
+  return(<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8,padding:"6px 0",borderTop:"1px solid "+T.bd+"55"}}>
+    <span style={{fontSize:10,color:T.txD,alignSelf:"center",marginRight:4}}>Assets:</span>
+    {window.ASSET_TYPES.map(at=>(<button key={at.id} onClick={()=>toggle(at.id)} title={(assets[at.id]?"✓ ":"Mark ")+at.label+(assets[at.id]?" — click to unmark":" as done")}
+      style={{display:"flex",gap:4,alignItems:"center",padding:"3px 8px",borderRadius:6,fontSize:10,cursor:"pointer",fontFamily:"inherit",
+        background:assets[at.id]?T.gold+"18":"transparent",border:"1px solid "+(assets[at.id]?T.gold+"44":T.bd),color:assets[at.id]?T.gold:T.txD}}>
+      <span>{at.icon}</span><span>{assets[at.id]?"✓":"✗"}</span>
+    </button>))}
+  </div>);
+}
+
 function CardView({topic,viewYear,compiledLore,onRefreshLore,onGenerateLore,loadingLore,editingLore,onEditToggle,onSaveLore,onFieldEdit,onNpcUpdate,onNpcGenerate,onNpcBulkGenerate,npcBusy,onNavigate,allTopics}){
   if(!topic)return null;
   const tmpl=TMPL_FOR[topic.aspect_id]||"culture";
@@ -835,10 +1175,13 @@ function CardView({topic,viewYear,compiledLore,onRefreshLore,onGenerateLore,load
           {topic.born_year!==null&&<Tag label={"Born: "+topic.born_year}/>}
           {topic.died_year!==null&&<Tag label={"Died: "+topic.died_year}/>}
           {topic.source==="azgaar"&&<Tag label="📍 Map"/>}
+          {window.provenance.label(topic)&&<Tag label={"🤖 "+window.provenance.label(topic)}/>}
         </div>
       </div>
     </div>
     {hasMfcg&&!hasCoa&&<div style={{marginTop:4}}><span style={{fontSize:11,color:T.accent}}>🏘️ Has city map</span></div>}
+    {/* Asset Status (Phase 5) — shows for characters, locations, notable-locations */}
+    {["characters","locations","notable-locations"].includes(topic.aspect_id)&&<AssetStatusRow topic={topic}/>}
   </div>);
 
   const savedLore=topic.generatedLore||topic.compiledLore||"";
@@ -854,6 +1197,15 @@ function CardView({topic,viewYear,compiledLore,onRefreshLore,onGenerateLore,load
       {editingLore&&<Btn sm v="s" onClick={onEditToggle}>Cancel</Btn>}
       {loreHist.length>0&&<Btn sm v="g" onClick={()=>setShowHist(!showHist)}>{showHist?"Hide":"📜 "+loreHist.length+" prev"}</Btn>}
     </div>
+    {/* Summary indicator (Phase 4) */}
+    {topic.summary&&<div style={{padding:"8px 12px",marginBottom:10,background:T.gold+"10",border:"1px solid "+T.gold+"33",borderRadius:8,fontSize:11,lineHeight:1.5}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+        <span style={{fontWeight:600,color:T.gold}}>📦 AI Summary (used in context assembly)</span>
+        <Btn sm v="g" onClick={async()=>{await window.summarizer.clearSummary(topic);window.location.reload();}}>Clear</Btn>
+      </div>
+      <div style={{color:T.txM,fontStyle:"italic"}}>{topic.summary}</div>
+      {topic.summary_date&&<div style={{fontSize:9,color:T.txD,marginTop:4}}>Summarised {new Date(topic.summary_date).toLocaleDateString()}</div>}
+    </div>}
     {editingLore?<><textarea value={compiledLore||savedLore} onChange={e=>onSaveLore&&onSaveLore(e.target.value,true)} style={{width:"100%",minHeight:180,resize:"vertical",padding:12,borderRadius:8,border:"1px solid "+T.bd,background:T.sf,color:T.tx,fontSize:13,fontFamily:"inherit",outline:"none",lineHeight:1.7}}/><div style={{display:"flex",gap:8,marginTop:8}}><Btn sm onClick={()=>onSaveLore&&onSaveLore(compiledLore||savedLore,false)}>Save</Btn></div></>
     :<div style={{fontSize:13,color:T.txM,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{displayLore||"Use Compile to synthesize chat mentions, or Generate to create AI lore from known facts."}</div>}
     {showHist&&<div style={{marginTop:12,borderTop:"1px solid "+T.bd,paddingTop:10}}>
@@ -1390,6 +1742,7 @@ function App(){
   const[bibleData,setBibleData]=useState(null);const[apiKeyInput,setApiKeyInput]=useState("");const[hasKey,setHasKey]=useState(false);
   const[providerSel,setProviderSel]=useState("claude");const[customEndpoint,setCustomEndpoint]=useState("");
   const[comfyHostInput,setComfyHostInput]=useState("http://localhost:8188");const[comfyCheckpointInput,setComfyCheckpointInput]=useState("v1-5-pruned-emaonly.ckpt");const[imgBusy,setImgBusy]=useState(false);
+  const[forgeRulesGlobal,setForgeRulesGlobal]=useState("");const[forgeRulesWorld,setForgeRulesWorld]=useState("");
   const[aspCounts,setAspCounts]=useState({});const[aspChats,setAspChats]=useState({});
   const[tagFilter,setTagFilter]=useState("");const[allTags,setAllTags]=useState([]);const[tagInput,setTagInput]=useState("");const[subFilter,setSubFilter]=useState("");const[editingLore,setEditingLore]=useState(false);const[allWorldTopics,setAllWorldTopics]=useState([]);const[relSearch,setRelSearch]=useState("");const[relLabel,setRelLabel]=useState("");const[bulkMode,setBulkMode]=useState(false);const[bulkSel,setBulkSel]=useState(new Set());const[dashData,setDashData]=useState(null);
   const[mapSvg,setMapSvg]=useState(null);const[mapPack,setMapPack]=useState(null);const[hasMapData,setHasMapData]=useState(false);
@@ -1521,9 +1874,10 @@ function App(){
   const exitChat=async()=>{if(uc){setCC(null);setUc(false);if(cUA&&cU){goUniverseAspect(cUA);}else if(cU){goUniverse(cU);}else{goMain();}return;}const pa=cA,pw=cW;if(!gen&&!wc&&pw&&pa&&cC?.messages?.length>1){setScanNotif("Auto-scanning...");setTimeout(async()=>{await scanAspect(pw.id,pa,false);await loadAspCounts(pw.id);setScanNotif("Done");setTimeout(()=>setScanNotif(""),2000);},100);}setCC(null);setScr(gen?"general":(wc?"worldchatlist":"aspect"));};
   const compileLore=async()=>{if(!curTopic||!cW)return;setLoadingLore(true);const all=await db.gatherAllText(cW.id);const resp=await aiCall(window.buildLorePrompt(curTopic.name,cW.name),[{role:"user",content:all.slice(0,15000)}],2048);const hist=pushLoreHistory(curTopic,resp,"compile");setCompiledLore(resp);const t={...curTopic,compiledLore:resp,loreHistory:hist};setCurTopic(t);await db.saveTopic(t);setLoadingLore(false);setEditingLore(false);};
   const generateLore=async()=>{if(!curTopic||!cW)return;setLoadingLore(true);const bible=await db.getBible(cW.id);const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"] "+Object.entries(e).map(([k,v])=>k+":"+v).join(", ")).join("\n");let ubt="";if(cW.useUniverseContext&&cW.universe_id)ubt=await db.getUniverseBibleText(cW.universe_id);
+    const rulesPre=await window.forgeRules.buildPreamble(cW.id);
     // Build relations context from linked topics
     let relCtx="";if(curTopic.relations&&curTopic.relations.length>0){const all=await db.listAllTopics(cW.id);const relLines=[];for(const r of curTopic.relations.slice(0,8)){const linked=all.find(t=>t.id===r.targetId);if(linked)relLines.push(r.targetName+" ("+r.relationship+")"+(linked.brief?" — "+linked.brief:""));}relCtx=relLines.join("\n");}
-    const sys=window.buildGenerateLorePrompt(curTopic.name,curTopic.fields,bt,ubt,curTopic.aspect_id,curTopic.subcategory,curTopic.brief,curTopic.template,relCtx);const resp=await aiCall(sys,[{role:"user",content:"Generate lore for this "+curTopic.aspect_id.replace(/-/g," ")+" entry specifically."}],2048);const hist=pushLoreHistory(curTopic,resp,"generate");const t={...curTopic,generatedLore:resp,loreHistory:hist};setCurTopic(t);await db.saveTopic(t);setCompiledLore(resp);setLoadingLore(false);setEditingLore(false);};
+    const sys=rulesPre+window.buildGenerateLorePrompt(curTopic.name,curTopic.fields,bt,ubt,curTopic.aspect_id,curTopic.subcategory,curTopic.brief,curTopic.template,relCtx);const resp=await aiCall(sys,[{role:"user",content:"Generate lore for this "+curTopic.aspect_id.replace(/-/g," ")+" entry specifically."}],2048);const hist=pushLoreHistory(curTopic,resp,"generate");const t=window.provenance.markAI({...curTopic,generatedLore:resp,loreHistory:hist},"generate_lore");setCurTopic(t);await db.saveTopic(t);setCompiledLore(resp);setLoadingLore(false);setEditingLore(false);};
   const saveLoreEdit=async(text)=>{if(!curTopic)return;const field=curTopic.generatedLore!==undefined?"generatedLore":"compiledLore";const t={...curTopic,[field]:text};setCurTopic(t);setCompiledLore(text);if(cW)await db.saveTopic(t);else if(cU)await db.saveUniverseTopic(t);setEditingLore(false);flash("Saved");};
   const handleFieldEdit=async(fieldKey,value)=>{if(!curTopic)return;const t={...curTopic,fields:{...(curTopic.fields||{}),[fieldKey]:value}};setCurTopic(t);if(cW)await db.saveTopic(t);else if(cU)await db.saveUniverseTopic(t);flash("Updated");};
   const handleNpcUpdate=async(npcs)=>{if(!curTopic||!cW)return;const t={...curTopic,npcs};setCurTopic(t);await db.saveTopic(t);};
@@ -1578,7 +1932,8 @@ function App(){
     if(gen){sys=CAT_RULES+"\nYou are CelestialForge General Chat.\nWorlds: "+(worlds.map(w=>w.name).join(", ")||"None")+"\nAdd [FILE: World > aspect-id] lines.\nIDs: "+aIds;}
     else if(wc){const bible=await db.getBible(cW.id);const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"] "+Object.entries(e).map(([k,v])=>k+":"+v).join(", ")).join("\n");const uCtx=await getUCtx();
       const smart=await db.buildSmartContext(cW.id,txt);
-      sys=CAT_RULES+"\nCelestialForge for \""+cW.name+"\""+yearCtx+uCtx+"\nBIBLE: "+(bt||"empty")+smart.contextStr+"\nAdd [CAT: aspect-id] lines.\nIDs: "+aIds+"\nIMPORTANT: If the user mentions any entity from TOPIC CONTEXT, cross-reference your response against its known facts. Flag contradictions with ⚠️ CONTRADICTION.";}
+      const rulesPre=await window.forgeRules.buildPreamble(cW.id);
+      sys=CAT_RULES+rulesPre+"\nCelestialForge for \""+cW.name+"\""+yearCtx+uCtx+smart.contextStr+"\nAdd [CAT: aspect-id] lines.\nIDs: "+aIds+"\nIMPORTANT: If the user mentions any entity from TOPIC CONTEXT, cross-reference your response against WORLD RULES and WORLD FACTS. Flag contradictions with ⚠️ CONTRADICTION.";}
     else{const bible=await db.getBible(cW.id);const bt=Object.entries(bible.facts||{}).map(([c,e])=>"["+c+"] "+Object.entries(e).map(([k,v])=>k+":"+v).join(", ")).join("\n");const uCtx=await getUCtx();
       // Template-aware: include field guidance
       const fields=window.ASPECT_FIELDS[cA.id]||"";const fieldCtx=fields?"\nWhen discussing entries in this category, try to establish: "+fields+".":"";
@@ -1587,7 +1942,8 @@ function App(){
       // Consistency: existing topics in this aspect (with relation info)
       const existingTopics=await db.listTopics(cW.id,cA.id);const topicCtx=existingTopics.slice(0,20).map(t=>{let s=t.name+(t.brief?" — "+t.brief:"")+(t.subcategory?" ["+t.subcategory+"]":"");if(t.relations&&t.relations.length>0)s+=" (linked: "+t.relations.slice(0,3).map(r=>r.targetName).join(", ")+")";return s;}).join("\n");
       const consistencyCtx=topicCtx?"\nEXISTING ENTRIES (check for contradictions):\n"+topicCtx:"";
-      sys="CelestialForge for \""+cW.name+"\" | \""+cA.name+"\""+yearCtx+uCtx+"\nBIBLE: "+(bt||"empty")+fieldCtx+consistencyCtx+smart.contextStr+"\nBe creative. When the user mentions a known entity, cross-reference against TOPIC CONTEXT and EXISTING ENTRIES. Flag contradictions with ⚠️ CONTRADICTION: [description]. Suggest /addfact for new lore. Suggest 🔗 connections when entities seem related but aren't linked.";}
+      const rulesPre=await window.forgeRules.buildPreamble(cW.id);
+      sys="CelestialForge for \""+cW.name+"\" | \""+cA.name+"\""+yearCtx+uCtx+rulesPre+fieldCtx+consistencyCtx+smart.contextStr+"\nBe creative. When the user mentions a known entity, cross-reference against TOPIC CONTEXT, EXISTING ENTRIES, and WORLD RULES. Flag contradictions with ⚠️ CONTRADICTION: [description]. Suggest /addfact for new lore. Suggest 🔗 connections when entities seem related but aren't linked.";}
     let resp=await aiCall(sys,chat.messages);const filed=[];
     if(gen){const fp=/\[FILE:\s*(.+?)\s*>\s*(.+?)\]\s*(.+?)(?:\n|$)/g;let m;while((m=fp.exec(resp))!==null){const w=worlds.find(w=>w.name.toLowerCase().includes(m[1].toLowerCase().trim()));const a=ASPECTS.find(a=>a.id===m[2].trim()||a.name.toLowerCase().includes(m[2].toLowerCase().trim()));if(w&&a){await db.fileNote(w.id,a.id,m[3].trim());filed.push(w.name+" > "+a.name);}}resp=resp.replace(fp,"").trim();}
     if(wc){const cp=/\[CAT:\s*(.+?)\]\s*(.+?)(?:\n|$)/g;let m;while((m=cp.exec(resp))!==null){const a=ASPECTS.find(a=>a.id===m[1].trim()||a.name.toLowerCase().includes(m[1].toLowerCase().trim()));if(a){await db.fileNote(cW.id,a.id,m[2].trim());filed.push(cW.name+" > "+a.name);}}resp=resp.replace(cp,"").trim();}
@@ -1692,7 +2048,7 @@ function App(){
   };
 
   const doImport=async()=>{if(!impTxt.trim())return;try{const d=JSON.parse(impTxt);const c=await db.importAll(d);flash("Imported "+c.universes+"u "+c.worlds+"w "+c.chats+"c "+c.topics+"t");setImpTxt("");await ldU();await ldW();setScr("settings");}catch(e){flash("Invalid JSON");}};
-  const saveSettings=async()=>{const k=apiKeyInput.replace(/[^\x20-\x7E]/g,'').trim();if(k){await db.setApiKey(k);setHasKey(true);}else{await db.setApiKey(null);setHasKey(false);}await db.setProvider(providerSel);await db.setCustomEndpoint(customEndpoint);const ch=comfyHostInput.trim()||"http://localhost:8188";await db.setComfyHost(ch);await db.setComfyCheckpoint(comfyCheckpointInput.trim()||"v1-5-pruned-emaonly.ckpt");flash("Saved");};
+  const saveSettings=async()=>{const k=apiKeyInput.replace(/[^\x20-\x7E]/g,'').trim();if(k){await db.setApiKey(k);setHasKey(true);}else{await db.setApiKey(null);setHasKey(false);}await db.setProvider(providerSel);await db.setCustomEndpoint(customEndpoint);const ch=comfyHostInput.trim()||"http://localhost:8188";await db.setComfyHost(ch);await db.setComfyCheckpoint(comfyCheckpointInput.trim()||"v1-5-pruned-emaonly.ckpt");await window.forgeRules.setGlobal(forgeRulesGlobal);if(cW)await window.forgeRules.set(cW.id,forgeRulesWorld);flash("Saved");};
   const openBible=async()=>{if(cW){setBibleData((await db.getBible(cW.id)).facts||{});setMod({t:"bible"});}else if(cU){setBibleData((await db.getUniverseBible(cU.id)).facts||{});setMod({t:"bible"});}};
   const openFact=()=>{setModIn("");setMod({t:"fact"});};
   const doFact=async()=>{const r=modIn.trim();setMod(null);if(!r)return;const m=r.match(/(.+?)\s*-\s*(.+?):\s*(.+)/);if(m){if(cW){await db.addFact(cW.id,m[1].trim(),m[2].trim(),m[3].trim());}else if(cU){await db.addUniverseFact(cU.id,m[1].trim(),m[2].trim(),m[3].trim());}flash("Added");}else flash("cat - key: value");};
@@ -1830,6 +2186,35 @@ function App(){
     <Modal open={mod?.t==="charBuilder"} title="Character Builder" onClose={()=>setMod(null)} wide>
       {curTopic&&<CharBuilder topic={curTopic} onSave={async(fields)=>{const t={...curTopic,fields};setCurTopic(t);if(cW)await db.saveTopic(t);else if(cU)await db.saveUniverseTopic(t);flash("Character saved!");}} onClose={()=>setMod(null)}/>}
     </Modal>
+    {/* === Auto-Summarisation Modal (Phase 4) === */}
+    <Modal open={mod?.t==="autoSummarise"} title="📦 Summarise Heavy Entries" onClose={()=>setMod(null)} wide>
+      {mod?.t==="autoSummarise"&&<div>
+        <div style={{fontSize:12,color:T.txM,marginBottom:12,lineHeight:1.5}}>Select entries to compress. AI will generate concise summaries used for context assembly — full entries stay visible in the editor.</div>
+        <div style={{maxHeight:300,overflowY:"auto",marginBottom:12}}>
+          {(mod.candidates||[]).map(c=>{const sel=mod.selected?.has(c.topic.id);return(
+            <div key={c.topic.id} onClick={()=>{const s=new Set(mod.selected);if(sel)s.delete(c.topic.id);else s.add(c.topic.id);setMod({...mod,selected:s});}} style={{display:"flex",gap:8,alignItems:"center",padding:"8px 10px",marginBottom:4,background:sel?T.gold+"15":T.sf,border:"1px solid "+(sel?T.gold+"55":T.bd),borderRadius:8,cursor:"pointer"}}>
+              <span style={{fontSize:16,width:20,textAlign:"center"}}>{sel?"✓":"○"}</span>
+              <span style={{flex:1,fontSize:12,color:sel?T.gold:T.txM}}>{(ASPECTS.find(a=>a.id===c.topic.aspect_id)?.icon||"")+" "+c.topic.name}</span>
+              <span style={{fontSize:11,color:T.txD}}>{c.weight.toLocaleString()+" tok"}</span>
+              {c.hasSummary&&<span style={{fontSize:9,color:T.accent}}>already done</span>}
+            </div>);})}
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <Btn onClick={async()=>{const sel=mod.selected;if(!sel||sel.size===0){flash("Select at least one entry");return;}
+            const topics=(mod.candidates||[]).filter(c=>sel.has(c.topic.id)).map(c=>c.topic);
+            setBusy(true);setMod(null);
+            let done=0;flash("Summarising 0/"+topics.length+"...");
+            const results=await window.summarizer.summariseBatch(topics,(d,t,name)=>{done=d;flash("Summarising "+d+"/"+t+": "+name);});
+            const ok=results.filter(r=>r.ok).length;const fail=results.filter(r=>!r.ok).length;
+            flash("Done! "+ok+" summarised"+(fail>0?", "+fail+" failed":"")+".");
+            setDashData(await db.getWorldStats(cW.id));setBusy(false);
+          }} disabled={busy||!mod.selected?.size}>Summarise {mod.selected?.size||0} Entries</Btn>
+          <Btn v="s" onClick={()=>{const all=new Set((mod.candidates||[]).map(c=>c.topic.id));setMod({...mod,selected:all});}}>All</Btn>
+          <Btn v="s" onClick={()=>setMod({...mod,selected:new Set()})}>None</Btn>
+          <Btn v="s" onClick={()=>setMod(null)}>Cancel</Btn>
+        </div>
+      </div>}
+    </Modal>
     <Modal open={mod?.t==="promote"} title="Promote to Card" onClose={()=>setMod(null)}>
       <div style={{fontSize:12,color:T.txM,marginBottom:12}}>Choose which aspect to create the card in:</div>
       <div style={{maxHeight:400,overflowY:"auto"}}>{ASPECTS.map(a=><button key={a.id} onClick={async()=>{await promoteNote(mod?.note,a.id);setMod(null);}} style={{display:"flex",gap:10,alignItems:"center",width:"100%",padding:"10px 12px",marginBottom:4,background:T.sf,border:"1px solid "+T.bd,borderRadius:8,cursor:"pointer",color:T.tx,textAlign:"left"}} onMouseEnter={e=>e.currentTarget.style.borderColor=T.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=T.bd}><span style={{fontSize:18}}>{a.icon}</span><span style={{fontSize:13,fontWeight:500}}>{a.name}</span></button>)}</div>
@@ -1851,7 +2236,7 @@ function App(){
     <div style={{color:T.txD,fontSize:mob?13:15,marginBottom:mob?24:40}}>Worldbuilding AI Notebook</div>
     {!hasKey&&<div style={{marginBottom:24,padding:"8px 20px",background:T.red+"33",borderRadius:8,fontSize:13,color:T.redTx}}>No API key — Settings</div>}
     <div style={{display:"flex",flexDirection:mob?"column":"row",gap:mob?12:24,width:"100%",maxWidth:900}}>
-      {[{icon:"🌌",label:"Universes",desc:"Manage universes & worlds",onClick:goUniverses},{icon:"⚒️",label:"ForgeMaster",desc:"General chat + cross-world",onClick:goGen},{icon:"⚙️",label:"Settings",desc:"API, data, provider",onClick:()=>{setScr("settings");(async()=>{setApiKeyInput(await db.getApiKey()||"");setProviderSel(await db.getProvider());setCustomEndpoint(await db.getCustomEndpoint()||"");})();}}].map((c,i)=>(<button key={i} onClick={c.onClick} style={{flex:1,background:T.sf,border:"2px solid "+T.bd,borderRadius:mob?12:16,padding:mob?"20px 16px":"48px 24px",cursor:"pointer",textAlign:"center",transition:"border-color .2s,transform .15s",display:"flex",flexDirection:mob?"row":"column",alignItems:"center",justifyContent:mob?"flex-start":"center",gap:mob?16:0,minHeight:mob?0:280}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.gold;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bd;}}><div style={{fontSize:mob?32:48,marginBottom:mob?0:20}}>{c.icon}</div><div style={{textAlign:mob?"left":"center"}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?20:28,fontWeight:700,color:T.gold,marginBottom:mob?2:8}}>{c.label}</div><div style={{fontSize:mob?12:13,color:T.txD}}>{c.desc}</div></div></button>))}
+      {[{icon:"🌌",label:"Universes",desc:"Manage universes & worlds",onClick:goUniverses},{icon:"⚒️",label:"ForgeMaster",desc:"General chat + cross-world",onClick:goGen},{icon:"⚙️",label:"Settings",desc:"API, data, provider, rules",onClick:()=>{setScr("settings");(async()=>{setApiKeyInput(await db.getApiKey()||"");setProviderSel(await db.getProvider());setCustomEndpoint(await db.getCustomEndpoint()||"");setForgeRulesGlobal(await window.forgeRules.getGlobal());if(cW)setForgeRulesWorld(await window.forgeRules.get(cW.id));})();}}].map((c,i)=>(<button key={i} onClick={c.onClick} style={{flex:1,background:T.sf,border:"2px solid "+T.bd,borderRadius:mob?12:16,padding:mob?"20px 16px":"48px 24px",cursor:"pointer",textAlign:"center",transition:"border-color .2s,transform .15s",display:"flex",flexDirection:mob?"row":"column",alignItems:"center",justifyContent:mob?"flex-start":"center",gap:mob?16:0,minHeight:mob?0:280}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.gold;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bd;}}><div style={{fontSize:mob?32:48,marginBottom:mob?0:20}}>{c.icon}</div><div style={{textAlign:mob?"left":"center"}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?20:28,fontWeight:700,color:T.gold,marginBottom:mob?2:8}}>{c.label}</div><div style={{fontSize:mob?12:13,color:T.txD}}>{c.desc}</div></div></button>))}
     </div></div>);
 
   if(scr==="universes")return S(<><div style={{padding:px,display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={goMain} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:16}}>{"‹"}</button><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?24:32,fontWeight:700,color:T.gold,flex:1}}>Universes</div><Btn sm={mob} onClick={openNewUniverse}>+ New Universe</Btn></div>
@@ -1923,11 +2308,51 @@ function App(){
     </div></>);
 
   if(scr==="dashboard"&&cW&&dashData)return S(<><div style={{padding:px,display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("world")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:mob?8:16}}>{"‹"}</button><div style={{flex:1}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?18:26,fontWeight:700,color:T.gold}}>📊 {cW.name}</div><div style={{fontSize:11,color:T.txD}}>World Dashboard</div></div>
+    <Btn sm v="s" onClick={async()=>{setBusy(true);flash("Building publication...");const md=await window.publication.buildMarkdown(cW.id);window.publication.download(md,cW.name);flash("Published! "+(dashData.draftMarkers>0?dashData.draftMarkers+" draft markers stripped.":"Clean export."));setBusy(false);}} disabled={busy} title="Export clean markdown with draft markers stripped">📄 Publish</Btn>
     <Btn sm v="a" onClick={doGameExport} disabled={busy}>🎮 Game Export</Btn></div>
     <div style={{flex:1,overflowY:"auto",padding:px2}}>
       <div style={{display:"grid",gridTemplateColumns:mob?"repeat(2,1fr)":"repeat(3,1fr)",gap:mob?8:12,marginBottom:20}}>
-        {[{label:"Topics",val:dashData.totalTopics,color:T.gold},{label:"Population",val:dashData.totalPop.toLocaleString(),color:T.accent},{label:"Connections",val:dashData.totalRels||0,color:"#6a8aaa"},{label:"Chats",val:dashData.chatCount||0,color:"#8a8ae8"},{label:"Notes",val:dashData.noteCount||0,color:"#e8a85e"},{label:"Unlinked",val:dashData.orphanCount||0,color:dashData.orphanCount>0?"#8a3a3a":"#3a8a3a"}].map((s,i)=>(<div key={i} style={{padding:mob?12:16,background:T.sf,border:"1px solid "+T.bd,borderRadius:10,textAlign:"center"}}><div style={{fontSize:mob?20:28,fontWeight:700,color:s.color}}>{s.val}</div><div style={{fontSize:10,color:T.txD,textTransform:"uppercase",marginTop:4}}>{s.label}</div></div>))}
+        {[{label:"Topics",val:dashData.totalTopics,color:T.gold},{label:"Population",val:dashData.totalPop.toLocaleString(),color:T.accent},{label:"Connections",val:dashData.totalRels||0,color:"#6a8aaa"},{label:"Chats",val:dashData.chatCount||0,color:"#8a8ae8"},{label:"Notes",val:dashData.noteCount||0,color:"#e8a85e"},{label:"Unlinked",val:dashData.orphanCount||0,color:dashData.orphanCount>0?"#8a3a3a":"#3a8a3a"},{label:"Draft Markers",val:dashData.draftMarkers||0,color:dashData.draftMarkers>0?"#c8a24e":"#3a8a3a"},{label:"Assets",val:(dashData.assetStats?.pct||0)+"%",color:dashData.assetStats?.pct>=80?"#3a8a3a":dashData.assetStats?.pct>0?"#c8a24e":"#8a3a3a"}].map((s,i)=>(<div key={i} style={{padding:mob?12:16,background:T.sf,border:"1px solid "+T.bd,borderRadius:10,textAlign:"center"}}><div style={{fontSize:mob?20:28,fontWeight:700,color:s.color}}>{s.val}</div><div style={{fontSize:10,color:T.txD,textTransform:"uppercase",marginTop:4}}>{s.label}</div></div>))}
       </div>
+      {/* === Context Budget Card (Phase 1) === */}
+      {dashData.ctxBudget&&<div style={{marginBottom:20,padding:mob?12:16,background:T.sf,border:"1px solid "+T.bd,borderRadius:10}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:600,color:T.gold,textTransform:"uppercase",letterSpacing:1}}>🧠 Context Budget</div>
+          <select value={dashData.ctxBudget.modelKey} onChange={async(e)=>{await window.contextWeight.setModel(e.target.value);setBusy(true);setDashData(await db.getWorldStats(cW.id));setBusy(false);}} style={{background:T.sf2,color:T.tx,border:"1px solid "+T.bd,borderRadius:6,padding:"4px 8px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
+            {Object.entries(window.CONTEXT_MODELS).map(([k,m])=><option key={k} value={k}>{m.name}</option>)}
+          </select>
+        </div>
+        <div style={{fontSize:11,color:T.txD,marginBottom:8}}>Your world uses <span style={{fontWeight:600,color:dashData.ctxBudget.pct<60?"#3a8a3a":dashData.ctxBudget.pct<80?"#c8a24e":"#8a3a3a"}}>{dashData.ctxBudget.pct}%</span> of {dashData.ctxBudget.modelName} context ({dashData.ctxBudget.totalTokens.toLocaleString()} / {dashData.ctxBudget.modelTokens.toLocaleString()} tokens)</div>
+        {/* Progress bar */}
+        <div style={{width:"100%",height:8,background:T.bd,borderRadius:4,marginBottom:12,overflow:"hidden"}}>
+          <div style={{width:Math.min(100,dashData.ctxBudget.pct)+"%",height:8,borderRadius:4,background:dashData.ctxBudget.pct<60?"#3a8a3a":dashData.ctxBudget.pct<80?"#c8a24e":"#8a3a3a",transition:"width 0.3s"}}/>
+        </div>
+        {/* Breakdown: bible + aspect bars */}
+        <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:6,fontSize:11}}>
+          <span style={{color:T.txD,width:90}}>📖 Bible facts</span>
+          <div style={{flex:1,height:4,background:T.bd,borderRadius:2}}><div style={{width:Math.min(100,Math.round(dashData.ctxBudget.bibleTokens/Math.max(1,dashData.ctxBudget.totalTokens)*100))+"%",height:4,background:"#8a8ae8",borderRadius:2}}/></div>
+          <span style={{color:T.txM,minWidth:50,textAlign:"right"}}>{dashData.ctxBudget.bibleTokens.toLocaleString()}</span>
+        </div>
+        {ASPECTS.filter(a=>dashData.ctxBudget.aspectTotals[a.id]>0).sort((a,b)=>(dashData.ctxBudget.aspectTotals[b.id]||0)-(dashData.ctxBudget.aspectTotals[a.id]||0)).slice(0,8).map(a=>{const w=dashData.ctxBudget.aspectTotals[a.id];return(<div key={a.id} style={{display:"flex",gap:6,alignItems:"center",marginBottom:4,fontSize:11}}>
+          <span style={{color:T.txD,width:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.icon+" "+a.name}</span>
+          <div style={{flex:1,height:4,background:T.bd,borderRadius:2}}><div style={{width:Math.min(100,Math.round(w/Math.max(1,dashData.ctxBudget.topicTotal)*100))+"%",height:4,background:T.gold,borderRadius:2}}/></div>
+          <span style={{color:T.txM,minWidth:50,textAlign:"right"}}>{w.toLocaleString()}</span>
+        </div>);})}
+        {/* Heaviest entries */}
+        {dashData.ctxBudget.heaviest.length>0&&<details style={{marginTop:10}}><summary style={{fontSize:11,color:T.goldD,cursor:"pointer",marginBottom:6}}>Heaviest entries ({dashData.ctxBudget.heaviest.length})</summary>
+          {dashData.ctxBudget.heaviest.map((tw,i)=><div key={tw.id} style={{display:"flex",gap:6,alignItems:"center",padding:"3px 0",fontSize:11}}>
+            <span style={{color:T.txD,width:18,textAlign:"right"}}>{i+1}.</span>
+            <span style={{flex:1,color:T.txM,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(ASPECTS.find(a=>a.id===tw.aspect_id)?.icon||"")+" "+tw.name}</span>
+            <span style={{color:T.gold,fontWeight:600,minWidth:50,textAlign:"right"}}>{tw.weight.toLocaleString()}</span>
+          </div>)}
+        </details>}
+      </div>}
+      {/* === Auto-Summarisation Prompt (Phase 4) — shows when budget > 80% === */}
+      {dashData.ctxBudget&&dashData.ctxBudget.pct>=80&&<div style={{marginBottom:20,padding:mob?12:16,background:"#8a3a3a18",border:"1px solid #8a3a3a44",borderRadius:10}}>
+        <div style={{fontSize:12,fontWeight:600,color:"#e8a85e",textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>📦 Context Getting Large</div>
+        <div style={{fontSize:12,color:T.txM,marginBottom:10,lineHeight:1.5}}>Your world uses {dashData.ctxBudget.pct}% of the {dashData.ctxBudget.modelName} context window. Summarising heavy entries will keep AI responses accurate by fitting more relevant context into each request.</div>
+        <Btn sm v="a" onClick={async()=>{setBusy(true);flash("Finding candidates...");const cands=await window.summarizer.candidates(cW.id);setBusy(false);if(!cands.length){flash("All heavy entries already summarised!");return;}setMod({t:"autoSummarise",candidates:cands,selected:new Set(cands.slice(0,5).map(c=>c.topic.id))});}} disabled={busy}>Summarise Heavy Entries</Btn>
+      </div>}
       {dashData.emptyAspects.length>0&&<div style={{marginBottom:20,padding:mob?12:16,background:T.sf,border:"1px solid "+T.bd,borderRadius:10}}><div style={{fontSize:12,fontWeight:600,color:T.gold,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>⚠️ Coverage Gaps</div><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{dashData.emptyAspects.map(a=><button key={a.id} onClick={()=>goAspect(a)} style={{padding:"6px 12px",background:T.sf2,border:"1px solid "+T.bd,borderRadius:6,cursor:"pointer",fontSize:12,color:T.txM}}>{a.icon+" "+a.name}</button>)}</div></div>}
       {dashData.topSubs.length>0&&<div style={{marginBottom:20,padding:mob?12:16,background:T.sf,border:"1px solid "+T.bd,borderRadius:10}}><div style={{fontSize:12,fontWeight:600,color:T.gold,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Top Subcategories</div><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{dashData.topSubs.map(([s,c])=><Tag key={s} label={s+" ("+c+")"}/>)}</div></div>}
       {dashData.orphanTopics&&dashData.orphanTopics.length>0&&<div style={{marginBottom:20,padding:mob?12:16,background:T.sf,border:"1px solid "+T.bd,borderRadius:10}}><div style={{fontSize:12,fontWeight:600,color:T.gold,textTransform:"uppercase",letterSpacing:1,marginBottom:4}}>🔗 Unlinked Topics</div><div style={{fontSize:11,color:T.txD,marginBottom:8}}>These have no relationships — consider linking them</div><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{dashData.orphanTopics.map(t=><button key={t.id} onClick={async()=>{const asp=ASPECTS.find(a=>a.id===t.aspect_id);if(asp){setCA(asp);setTopicList(await db.listTopics(cW.id,asp.id));setCList(await db.listChats(cW.id,asp.id));setAllTags(await db.listAllTags(cW.id));}setCurTopic(t);setCompiledLore(t.generatedLore||t.compiledLore||"");setEditingLore(false);setScr("card");}} style={{padding:"5px 10px",background:T.sf2,border:"1px solid "+T.bd,borderRadius:6,cursor:"pointer",fontSize:11,color:T.txM}}>{(ASPECTS.find(a=>a.id===t.aspect_id)?.icon||"?")+" "+t.name}</button>)}{dashData.orphanCount>15&&<span style={{fontSize:10,color:T.txD,padding:"5px 6px"}}>+{dashData.orphanCount-15} more</span>}</div></div>}
@@ -2084,7 +2509,16 @@ function App(){
         <Btn sm v="s" onClick={async()=>{try{const r=await fetch(comfyHostInput.trim()+'/system_stats');if(r.ok)flash("✅ ComfyUI connected!");else flash("⚠️ ComfyUI responded but with error "+r.status);}catch(e){flash("❌ Could not reach ComfyUI — is it running?");}}}>Test Connection</Btn>
       </div>
       <div style={{borderTop:"1px solid "+T.bd,marginTop:24,paddingTop:20}}><div style={{fontSize:13,fontWeight:600,color:T.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:1}}>Data</div><div style={{display:"flex",gap:10,flexWrap:"wrap"}}><Btn v="s" onClick={doExport}>📤 Export</Btn><Btn v="s" onClick={()=>setScr("import")}>📥 Import</Btn><Btn v="s" onClick={async()=>{if(navigator.serviceWorker){const regs=await navigator.serviceWorker.getRegistrations();for(const r of regs)await r.unregister();}if(window.caches){const keys=await caches.keys();for(const k of keys)await caches.delete(k);}flash("Cache cleared — reload page");}}>🔄 Clear Cache</Btn><Btn v="d" onClick={()=>setMod({t:"delAll"})}>🗑️</Btn></div></div>
-      <div style={{marginTop:32,fontSize:11,color:T.txD,lineHeight:1.6}}>CelestialForge Desktop v6.9{"\n"}Engine Export · Grouped Taxonomy · Smart Context · Global Search · Dashboard{"\n"}Scratchpad · Relationship Web · Universes · Relations · Lore Gen · ComfyUI Images</div>
+      <div style={{borderTop:"1px solid "+T.bd,marginTop:24,paddingTop:20}}>
+        <div style={{fontSize:13,fontWeight:600,color:T.gold,marginBottom:4,textTransform:"uppercase",letterSpacing:1}}>📜 Forge Rules</div>
+        <div style={{fontSize:11,color:T.txD,marginBottom:12,lineHeight:1.6}}>Hard constraints injected into every AI prompt. The AI will never contradict these. Use for canon facts like magic systems, calendar eras, or fundamental world laws.</div>
+        <div style={{fontSize:11,fontWeight:600,color:T.gold,marginBottom:6}}>Global Rules (all worlds)</div>
+        <textarea value={forgeRulesGlobal} onChange={e=>setForgeRulesGlobal(e.target.value)} placeholder={"One rule per line, e.g.:\nAll magic derives from Source energy\nThe multiverse has exactly seven realms"} rows={3} style={{...iS,resize:"vertical",marginBottom:12,fontFamily:"monospace",fontSize:12}}/>
+        {cW&&<><div style={{fontSize:11,fontWeight:600,color:T.gold,marginBottom:6}}>World Rules ({cW.name})</div>
+        <textarea value={forgeRulesWorld} onChange={e=>setForgeRulesWorld(e.target.value)} placeholder={"Rules specific to this world, e.g.:\nYear 1 NE marks the founding of Newcestow\nDragons were hunted to extinction 80 years ago"} rows={3} style={{...iS,resize:"vertical",marginBottom:8,fontFamily:"monospace",fontSize:12}}/></>}
+        <div style={{fontSize:10,color:T.txD}}>Rules + Bible facts are injected as canon into every chat and lore generation prompt. Click Save above to persist.</div>
+      </div>
+      <div style={{marginTop:32,fontSize:11,color:T.txD,lineHeight:1.6}}>CelestialForge Desktop v7.0{"\n"}Context Budget · Publication Mode · Priority Context · Auto-Summarisation{"\n"}Asset Tracking · Forge Rules · Engine Export · Relationship Web · ComfyUI</div>
     </div></>);
 
   if(scr==="import")return S(<><div style={{padding:px,display:"flex",alignItems:"center",borderBottom:"1px solid "+T.bd}}><button onClick={()=>setScr("settings")} style={{background:"none",border:"none",color:T.gold,fontSize:22,cursor:"pointer",marginRight:mob?8:16}}>{"‹"}</button><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:mob?18:22,fontWeight:700,color:T.gold}}>Import</div></div>
