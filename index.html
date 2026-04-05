@@ -1746,7 +1746,7 @@ function App(){
   const[aspCounts,setAspCounts]=useState({});const[aspChats,setAspChats]=useState({});
   const[tagFilter,setTagFilter]=useState("");const[allTags,setAllTags]=useState([]);const[tagInput,setTagInput]=useState("");const[subFilter,setSubFilter]=useState("");const[editingLore,setEditingLore]=useState(false);const[allWorldTopics,setAllWorldTopics]=useState([]);const[relSearch,setRelSearch]=useState("");const[relLabel,setRelLabel]=useState("");const[bulkMode,setBulkMode]=useState(false);const[bulkSel,setBulkSel]=useState(new Set());const[dashData,setDashData]=useState(null);
   const[mapSvg,setMapSvg]=useState(null);const[mapPack,setMapPack]=useState(null);const[hasMapData,setHasMapData]=useState(false);
-  const[groupMode,setGroupMode]=useState(true);const[curGroup,setCurGroup]=useState(null);const[groupTopics,setGroupTopics]=useState([]);
+  const[groupMode,setGroupMode]=useState(true);const[curGroup,setCurGroup]=useState(null);const[groupTopics,setGroupTopics]=useState([]);const[aspFilter,setAspFilter]=useState("");
   const[scanResults,setScanResults]=useState(null);const[scanNotif,setScanNotif]=useState("");
   const[viewYear,setViewYear]=useState(null);
   const endRef=useRef(null);const svgFileRef=useRef(null);const jsonFileRef=useRef(null);const mapFileRef=useRef(null);const cityFileRef=useRef(null);
@@ -2390,7 +2390,7 @@ function App(){
 
   if(scr==="group"&&cW&&curGroup){
     const gAspects=curGroup.aspects.map(aid=>ASPECTS.find(a=>a.id===aid)).filter(Boolean);
-    const[aspFilter,setAspFilter]=useState("");
+
     const filtByAsp=aspFilter?groupTopics.filter(t=>t.aspect_id===aspFilter):groupTopics;
     const gSubs=[...new Set(groupTopics.map(t=>t.subcategory).filter(Boolean))].sort();
     const filtBySub=subFilter?filtByAsp.filter(t=>t.subcategory===subFilter):filtByAsp;
